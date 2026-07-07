@@ -6,14 +6,14 @@ python -m nuitka ^
   --include-package=apps ^
   --include-package=config ^
   --include-package=django ^
+  --include-package-data=django ^
   --include-package=rest_framework ^
+  --include-package-data=rest_framework ^
   --include-package=django_filters ^
   --include-package=psycopg ^
   --include-package=waitress ^
   --include-module=config.wsgi ^
   --module-parameter=django-settings-module=config.settings.production ^
-  --include-data-dir=apps=apps ^
-  --include-data-dir=config=config ^
   --assume-yes-for-downloads ^
   --windows-console-mode=disable ^
   run_server.py

@@ -5,7 +5,9 @@ python -m nuitka ^
   --include-package=apps ^
   --include-package=config ^
   --include-package=django ^
+  --include-package-data=django ^
   --include-package=rest_framework ^
+  --include-package-data=rest_framework ^
   --include-package=django_filters ^
   --include-package=psycopg ^
   --include-package=waitress ^

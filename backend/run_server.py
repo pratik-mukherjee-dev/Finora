@@ -1,14 +1,20 @@
 import os
+from pathlib import Path
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.production")
 
 
 def main():
+    rc = os.environ.get("FINORA_RUNTIME_CONFIG", "")
+    if not rc or not Path(rc).is_file():
+        raise SystemExit(
+            "FINORA_RUNTIME_CONFIG missing — Tauri must write runtime config before starting backend."
+        )
+
     from django.core.management import call_command
     import django
 
     django.setup()
-    # Ensure schema is current on the client's machine
     call_command("migrate", interactive=False, verbosity=1)
 
     from waitress import serve
