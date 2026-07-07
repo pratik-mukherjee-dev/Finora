@@ -21,7 +21,7 @@ fn free_port() -> u16 {
 pub fn start(app: &AppHandle) -> Result<(Sidecars, u16), String> {
 //     let res = app.path().resource_dir().map_err(|e| e.to_string())?;
     let res = resources_root(app);
-    let pg_bin = res.join("resources/pgsql/bin");
+    let pg_bin = res.join("pgsql/bin");
     let initdb = pg_bin.join("initdb.exe");
     let pg_ctl = pg_bin.join("pg_ctl.exe");
     let psql = pg_bin.join("psql.exe");

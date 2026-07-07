@@ -1,5 +1,17 @@
+import io
 import os
+import sys
 from pathlib import Path
+
+# The windowed Nuitka build (--windows-console-mode=disable) starts with no
+# console attached, so sys.stdout / sys.stderr are None. Anything that writes
+# to them — Django's migrate output, warnings, tracebacks — raises
+# AttributeError: 'NoneType' object has no attribute 'write'. Redirect both to
+# os.devnull before Django is imported or configured.
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w")
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.production")
 
@@ -15,7 +27,7 @@ def main():
     import django
 
     django.setup()
-    call_command("migrate", interactive=False, verbosity=1)
+    call_command("migrate", interactive=False, verbosity=0, stdout=io.StringIO())
 
     from waitress import serve
     from config.wsgi import application

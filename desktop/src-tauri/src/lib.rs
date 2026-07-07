@@ -17,13 +17,32 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_http::init())
         .setup(|app| {
-            let handle = app.handle().clone();
-            let (sc, dj_port) = backend::start(&handle).expect("sidecar startup failed");
+            // Register state up front with port 0 (= "not ready yet") so the
+            // window can open and render a splash instead of blocking the UI
+            // thread on the Postgres + Django boot.
             app.manage(AppState {
-                sidecars: Mutex::new(Some(sc)),
-                django_port: Mutex::new(dj_port),
+                sidecars: Mutex::new(None),
+                django_port: Mutex::new(0),
             });
+
+            // Run the heavy startup off the main/UI thread.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                match backend::start(&handle) {
+                    Ok((sc, dj_port)) => {
+                        let state = handle.state::<AppState>();
+                        *state.sidecars.lock().unwrap() = Some(sc);
+                        *state.django_port.lock().unwrap() = dj_port;
+                        println!("Finora backend ready on 127.0.0.1:{dj_port}");
+                    }
+                    Err(e) => {
+                        eprintln!("sidecar startup failed: {e}");
+                    }
+                }
+            });
+
             Ok(())
         })
         .on_window_event(|window, event| {

@@ -1,156 +1,135 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
+  import { onMount } from "svelte";
+  import { waitForBackend, health, apiBase, ApiError } from "$lib/api";
 
-  let name = $state("");
-  let greetMsg = $state("");
+  type Phase = "connecting" | "ready" | "error";
 
-  async function greet(event: Event) {
-    event.preventDefault();
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsg = await invoke("greet", { name });
+  let phase = $state<Phase>("connecting");
+  let attempts = $state(0);
+  let baseUrl = $state("");
+  let healthStatus = $state("");
+  let errorMsg = $state("");
+
+  async function boot() {
+    phase = "connecting";
+    attempts = 0;
+    errorMsg = "";
+    healthStatus = "";
+    try {
+      baseUrl = await waitForBackend({
+        intervalMs: 400,
+        timeoutMs: 30000,
+        onAttempt: (n) => (attempts = n),
+      });
+      const h = await health();
+      healthStatus = h.status;
+      phase = "ready";
+    } catch (e) {
+      if (e instanceof ApiError) {
+        errorMsg = `HTTP ${e.status}: ${e.message}`;
+      } else {
+        errorMsg = e instanceof Error ? e.message : String(e);
+      }
+      phase = "error";
+    }
   }
+
+  onMount(boot);
 </script>
 
-<main class="container">
-  <h1>Welcome to Tauri + Svelte</h1>
-
-  <div class="row">
-    <a href="https://vite.dev" target="_blank">
-      <img src="/vite.svg" class="logo vite" alt="Vite Logo" />
-    </a>
-    <a href="https://tauri.app" target="_blank">
-      <img src="/tauri.svg" class="logo tauri" alt="Tauri Logo" />
-    </a>
-    <a href="https://svelte.dev" target="_blank">
-      <img src="/svelte.svg" class="logo svelte-kit" alt="SvelteKit Logo" />
-    </a>
-  </div>
-  <p>Click on the Tauri, Vite, and SvelteKit logos to learn more.</p>
-
-  <form class="row" onsubmit={greet}>
-    <input id="greet-input" placeholder="Enter a name..." bind:value={name} />
-    <button type="submit">Greet</button>
-  </form>
-  <p>{greetMsg}</p>
+<main class="wrap">
+  {#if phase === "connecting"}
+    <div class="spinner"></div>
+    <h1>Starting Finora…</h1>
+    <p class="muted">Waiting for the local database and server (attempt {attempts}).</p>
+  {:else if phase === "ready"}
+    <div class="badge ok">✓</div>
+    <h1>Backend connected</h1>
+    <p class="muted">Base URL: <code>{baseUrl}</code></p>
+    <p class="muted">/health/ → <code>{healthStatus}</code></p>
+  {:else}
+    <div class="badge err">!</div>
+    <h1>Couldn’t reach the backend</h1>
+    <p class="muted">{errorMsg}</p>
+    <p class="muted">Last known base URL: <code>{apiBase() ?? "unresolved"}</code></p>
+    <button onclick={boot}>Retry</button>
+  {/if}
 </main>
 
 <style>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.svelte-kit:hover {
-  filter: drop-shadow(0 0 2em #ff3e00);
-}
-
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
-}
-
-.container {
-  margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
-  display: flex;
-  justify-content: center;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
-  cursor: pointer;
-}
-
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
-}
-
-input,
-button {
-  outline: none;
-}
-
-#greet-input {
-  margin-right: 5px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
+  :global(body) {
+    margin: 0;
+    background: #0f1115;
+    color: #e6e8ec;
+    font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   }
-
-  a:hover {
-    color: #24c8db;
+  .wrap {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    text-align: center;
+    padding: 2rem;
   }
-
-  input,
+  h1 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin: 0.3rem 0 0;
+  }
+  .muted {
+    color: #9aa0aa;
+    margin: 0.15rem 0;
+    font-size: 0.9rem;
+  }
+  code {
+    background: #1a1d24;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    color: #d6dae0;
+  }
+  .spinner {
+    width: 34px;
+    height: 34px;
+    border: 3px solid #2a2f3a;
+    border-top-color: #4c8bf5;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .badge {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-weight: 700;
+    font-size: 1.2rem;
+  }
+  .badge.ok {
+    background: #163a2b;
+    color: #46d18a;
+  }
+  .badge.err {
+    background: #3a1a1a;
+    color: #f57070;
+  }
   button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
+    margin-top: 0.6rem;
+    padding: 0.5rem 1.1rem;
+    border-radius: 8px;
+    border: 1px solid #2a2f3a;
+    background: #1a1d24;
+    color: #e6e8ec;
+    font-size: 0.9rem;
+    cursor: pointer;
   }
-  button:active {
-    background-color: #0f0f0f69;
+  button:hover {
+    border-color: #4c8bf5;
   }
-}
-
 </style>
