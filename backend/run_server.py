@@ -27,6 +27,19 @@ def main():
     import django
 
     django.setup()
+    # To create superuser for testing in bundled postgres
+    # Option A:
+    # import sys
+    # from django.core.management import execute_from_command_line
+    #
+    # if len(sys.argv) > 1 and sys.argv[1] == "createsuperuser":
+    #     execute_from_command_line([sys.argv[0], "createsuperuser"])
+    #     sys.exit(0)
+
+    # Option B:
+    # set DATABASE_URL=postgres://finora:finora@127.0.0.1:<PORT>/finora
+    # python manage.py createsuperuser
+
     call_command("migrate", interactive=False, verbosity=0, stdout=io.StringIO())
 
     from waitress import serve
