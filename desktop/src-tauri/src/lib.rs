@@ -18,6 +18,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_store::Builder::new().build())
         .setup(|app| {
             // Register state up front with port 0 (= "not ready yet") so the
             // window can open and render a splash instead of blocking the UI

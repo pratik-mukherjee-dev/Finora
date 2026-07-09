@@ -15,6 +15,17 @@ export class ApiError extends Error {
 
 // Resolved once the backend port is known; null until then.
 let _base: string | null = null;
+let _access: string | null = null;
+let _refresh: string | null = null;
+
+export function setTokens(t: { access: string; refresh?: string } | null) {
+  _access = t?.access ?? null;
+  if (t?.refresh) _refresh = t.refresh;
+}
+export function clearTokens() { _access = null; _refresh = null; }
+export function getAccess() { return _access; }
+export function getRefresh() { return _refresh; }
+
 
 /** Single call to the Rust side. Returns 0 while the backend is still booting. */
 export async function getDjangoPort(): Promise<number> {
@@ -74,10 +85,7 @@ export async function waitForBackend(opts: WaitOpts = {}): Promise<string> {
 }
 
 /** Thin JSON request wrapper over the Tauri HTTP plugin's fetch. */
-export async function request<T = unknown>(
-  path: string,
-  init: RequestInit = {}
-): Promise<T> {
+async function rawRequest<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
   if (!_base) {
     throw new Error("API base not resolved — call waitForBackend() first.");
   }
@@ -94,11 +102,7 @@ export async function request<T = unknown>(
   const text = await res.text();
   let data: unknown = text;
   if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      /* non-JSON response; keep raw text */
-    }
+    try { data = JSON.parse(text); } catch { /* keep raw text */ }
   }
 
   if (!res.ok) {
@@ -112,7 +116,63 @@ export async function request<T = unknown>(
   return data as T;
 }
 
+async function refreshAccess(): Promise<boolean> {
+  if (!_refresh) return false;
+  try {
+    const r = await rawRequest<{ access: string; refresh?: string }>(
+      "/api/accounts/auth/refresh/",
+      { method: "POST", body: JSON.stringify({ refresh: _refresh }) }
+    );
+    setTokens(r);
+    return true;
+  } catch {
+    clearTokens();
+    return false;
+  }
+}
+
+/** Auth-aware JSON request: injects Bearer token, retries once on 401 via refresh. */
+export async function request<T = unknown>(
+  path: string,
+  init: RequestInit = {},
+  _retried = false
+): Promise<T> {
+  const headers: Record<string, string> = {
+    ...((init.headers as Record<string, string>) ?? {}),
+  };
+  if (_access) headers["Authorization"] = `Bearer ${_access}`;
+
+  try {
+    return await rawRequest<T>(path, { ...init, headers });
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401 && !_retried && (await refreshAccess())) {
+      return request<T>(path, init, true);
+    }
+    throw e;
+  }
+}
+
+
 /** Unauthenticated smoke-test endpoint (plain Django view, no auth/CSRF). */
 export async function health(): Promise<{ status: string }> {
   return await request<{ status: string }>("/health/");
+}
+
+export async function login(username: string, password: string) {
+  const r = await rawRequest<{ access: string; refresh: string }>(
+    "/api/accounts/auth/login/",
+    { method: "POST", body: JSON.stringify({ username, password }) }
+  );
+  setTokens(r);
+  return r;
+}
+
+export async function logout() {
+  if (_refresh) {
+    await request("/api/accounts/auth/logout/", {
+      method: "POST",
+      body: JSON.stringify({ refresh: _refresh }),
+    }).catch(() => {});
+  }
+  clearTokens();
 }
