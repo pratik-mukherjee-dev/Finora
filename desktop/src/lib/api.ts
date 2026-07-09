@@ -176,3 +176,23 @@ export async function logout() {
   }
   clearTokens();
 }
+
+export type Suggestion = { id: number; name: string; [k: string]: unknown };
+
+export async function suggest(
+  type: "ITEM" | "PARTY",
+  q: string,
+  limit = 10,
+  signal?: AbortSignal
+): Promise<Suggestion[]> {
+  const p = new URLSearchParams({ type, q, limit: String(limit) });
+  return await request<Suggestion[]>(`/api/search/suggest/?${p.toString()}`, { signal });
+}
+
+export async function recordUsage(type: "ITEM" | "PARTY", id: number): Promise<void> {
+  await request("/api/search/record/", {
+    method: "POST",
+    body: JSON.stringify({ type, id }),
+  }).catch(() => {}); // ranking is best-effort; never block UX
+}
+

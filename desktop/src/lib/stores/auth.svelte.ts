@@ -26,7 +26,7 @@ let companies = $state<Company[]>([]);
 let ready = $state(false);
 
 async function persistRefresh(token: string | null) {
-  const s = await load(STORE, { autoSave: true });
+    const s = await load(STORE, { autoSave: true, defaults: {} });
   if (token) await s.set(REFRESH_KEY, token);
   else await s.delete(REFRESH_KEY);
 }
@@ -46,7 +46,7 @@ export const auth = {
   get needsSetup() { return companies.length === 0; },
 
   async restore() {
-    const s = await load(STORE, { autoSave: true });
+        const s = await load(STORE, { autoSave: true, defaults: {} });
     const refresh = await s.get<string>(REFRESH_KEY);
     if (refresh) {
       setTokens({ access: "", refresh });
