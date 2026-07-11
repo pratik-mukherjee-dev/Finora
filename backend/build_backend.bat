@@ -9,6 +9,8 @@ python -m nuitka ^
   --include-package-data=django ^
   --include-package=rest_framework ^
   --include-package-data=rest_framework ^
+  --include-package=rest_framework_simplejwt ^
+  --include-package-data=rest_framework_simplejwt ^
   --include-package=django_filters ^
   --include-package=psycopg ^
   --include-package=waitress ^
