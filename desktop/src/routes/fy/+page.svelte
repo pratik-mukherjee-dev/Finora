@@ -32,6 +32,7 @@
 
   async function submit(e: Event) {
     e.preventDefault();
+    if (busy) return;
     if (!startDate || !endDate) return;
     if (new Date(endDate) <= new Date(startDate)) {
       error = "End date must be after the start date.";
@@ -40,13 +41,12 @@
     busy = true;
     error = null;
     try {
-      await auth.createFy(startDate, endDate);
+      await auth.ensureFy(startDate, endDate);
       await goto("/app");
     } catch (err) {
       error =
         err instanceof ApiError ? err.message : "Could not create the financial year.";
-    } finally {
-      busy = false;
+      busy = false; // on success we navigate away, so only reset on failure
     }
   }
 </script>

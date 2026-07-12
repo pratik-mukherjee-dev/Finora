@@ -30,7 +30,11 @@
       }
 
       await auth.restore();
-      await goto(auth.isAuthed ? "/app" : "/login");
+      if (!auth.isAuthed) {await goto("/login"); return;}
+      if (auth.needsSetup) {await goto("/setup"); return;}
+      if (auth.needsFy) {await goto("/fy"); return;}
+      await goto("/app");
+
     } catch (e) {
       errorMsg =
         e instanceof ApiError ? `HTTP ${e.status}: ${e.message}`

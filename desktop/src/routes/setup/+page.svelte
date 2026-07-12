@@ -12,7 +12,7 @@
 
   onMount(() => {
     if (!auth.isAuthed) return void goto("/login");
-    if (!auth.needsSetup) return void goto("/app");
+    if (!auth.needsSetup) return void goto(auth.needsFy ? "/fy" : "/app");
     if (auth.mode === "multi") step = "company";
   });
 
@@ -35,7 +35,7 @@
     busy = true; error = null;
     try {
       await auth.createCompany(name.trim(), true);
-      await goto("/app");
+      await goto(auth.needsFy ? "/fy" : "/app");
     } catch (e) {
       error = e instanceof ApiError ? e.message : "Could not create company.";
     } finally { busy = false; }
