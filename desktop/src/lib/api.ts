@@ -26,7 +26,6 @@ export function clearTokens() { _access = null; _refresh = null; }
 export function getAccess() { return _access; }
 export function getRefresh() { return _refresh; }
 
-
 /** Single call to the Rust side. Returns 0 while the backend is still booting. */
 export async function getDjangoPort(): Promise<number> {
   return await invoke<number>("get_django_port");
@@ -152,10 +151,24 @@ export async function request<T = unknown>(
   }
 }
 
-
 /** Unauthenticated smoke-test endpoint (plain Django view, no auth/CSRF). */
 export async function health(): Promise<{ status: string }> {
   return await request<{ status: string }>("/health/");
+}
+
+/** Public: whether the single local account has been created yet. */
+export async function authState(): Promise<{ initialized: boolean }> {
+  return await rawRequest<{ initialized: boolean }>("/api/accounts/auth/state/");
+}
+
+/** First-run only: create the local account, receive + store tokens. */
+export async function register(username: string, password: string) {
+  const r = await rawRequest<{ access: string; refresh: string }>(
+    "/api/accounts/auth/register/",
+    { method: "POST", body: JSON.stringify({ username, password }) }
+  );
+  setTokens(r);
+  return r;
 }
 
 export async function login(username: string, password: string) {
@@ -195,4 +208,3 @@ export async function recordUsage(type: "ITEM" | "PARTY", id: number): Promise<v
     body: JSON.stringify({ type, id }),
   }).catch(() => {}); // ranking is best-effort; never block UX
 }
-

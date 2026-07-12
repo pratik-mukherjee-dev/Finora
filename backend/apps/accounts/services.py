@@ -1,7 +1,34 @@
 from django.db import transaction
 
 from ..common.exceptions import LicenseError, DomainError
-from .models import Company, UserCompanySetting, License
+from .models import Company, UserCompanySetting, License, User
+
+
+class AlreadyInitialized(Exception):
+    """Raised when registration is attempted but a local account already exists."""
+    pass
+
+
+@transaction.atomic
+def register_first_user(username, password):
+    """First-run only: create the single local user + base license + setting.
+
+    Guards on User.objects.exists() inside the transaction so a second call can
+    never create a competing account. Password is hashed by create_user.
+    """
+    if User.objects.exists():
+        raise AlreadyInitialized()
+    user = User.objects.create_user(username=username, password=password)
+    License.objects.create(
+        user=user, plan="base", mode=License.SINGLE, is_active=True
+    )
+    UserCompanySetting.objects.create(
+        user=user,
+        active_mode=UserCompanySetting.SINGLE,
+        segregation_enabled=False,
+        is_mode_locked=True,
+    )
+    return user
 
 
 @transaction.atomic

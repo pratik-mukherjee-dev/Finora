@@ -1,6 +1,7 @@
 import {
   login as apiLogin,
   logout as apiLogout,
+  register as apiRegister,
   setTokens,
   clearTokens,
   request,
@@ -26,7 +27,7 @@ let companies = $state<Company[]>([]);
 let ready = $state(false);
 
 async function persistRefresh(token: string | null) {
-    const s = await load(STORE, { autoSave: true, defaults: {} });
+  const s = await load(STORE, { autoSave: true, defaults: {} });
   if (token) await s.set(REFRESH_KEY, token);
   else await s.delete(REFRESH_KEY);
 }
@@ -46,7 +47,7 @@ export const auth = {
   get needsSetup() { return companies.length === 0; },
 
   async restore() {
-        const s = await load(STORE, { autoSave: true, defaults: {} });
+    const s = await load(STORE, { autoSave: true, defaults: {} });
     const refresh = await s.get<string>(REFRESH_KEY);
     if (refresh) {
       setTokens({ access: "", refresh });
@@ -60,6 +61,13 @@ export const auth = {
       }
     }
     ready = true;
+  },
+
+  async register(username: string, password: string) {
+    const r = await apiRegister(username, password);
+    await persistRefresh(r.refresh);
+    user = await request<User>("/api/accounts/auth/me/");
+    await loadContext();
   },
 
   async login(username: string, password: string) {

@@ -1,7 +1,7 @@
-<script lang="ts">
+    <script lang="ts">
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
-  import { waitForBackend, ApiError } from "$lib/api";
+  import { waitForBackend, authState, ApiError } from "$lib/api";
   import { auth } from "$lib/stores/auth.svelte";
 
   type Phase = "connecting" | "restoring" | "error";
@@ -21,6 +21,14 @@
         onAttempt: (n) => (attempts = n),
       });
       phase = "restoring";
+
+      // First launch on this device → no account yet → go create one.
+      const { initialized } = await authState();
+      if (!initialized) {
+        await goto("/register");
+        return;
+      }
+
       await auth.restore();
       await goto(auth.isAuthed ? "/app" : "/login");
     } catch (e) {
@@ -40,13 +48,13 @@
     <div class="badge err">!</div>
     <h1>Couldn’t reach the backend</h1>
     <p class="muted">{errorMsg}</p>
-    <button onclick={boot}>Retry</button>
+    <button onclick={ boot }>Retry</button>
   {:else}
     <div class="spinner"></div>
     <h1>{phase === "connecting" ? "Starting Finora…" : "Restoring session…"}</h1>
-    {#if phase === "connecting"}
-      <p class="muted">Waiting for the local database and server (attempt {attempts}).</p>
-    {/if}
+  {#if phase === "connecting"}
+    <p class="muted">Waiting for the local database and server (attempt { attempts }).</p>
+  {/if}
   {/if}
 </main>
 
