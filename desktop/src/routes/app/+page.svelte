@@ -1,4 +1,4 @@
-    <script lang="ts">
+<script lang="ts">
   import { auth } from "$lib/stores/auth.svelte";
   import { goto } from "$app/navigation";
   import { onMount } from "svelte";
@@ -61,7 +61,7 @@
             <button
                     class="navbtn"
             class:active={ section === item.id }
-              onclick={ () => selectSection(item.id) }
+          onclick={ () => selectSection(item.id) }
             >
             {item.label}
             </button>
