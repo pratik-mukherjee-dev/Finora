@@ -5,7 +5,7 @@ from datetime import timedelta
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR / ".env", override=False)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-insecure-change-me")
 DEBUG = os.getenv("DEBUG", "0") == "1"

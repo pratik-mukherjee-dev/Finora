@@ -1,96 +1,135 @@
-<script lang="ts">
+    <script lang="ts">
   import { auth } from "$lib/stores/auth.svelte";
   import { goto } from "$app/navigation";
-  import { ApiError } from "$lib/api";
   import { onMount } from "svelte";
 
-  // Indian FY convention: Apr 1 → Mar 31. Pick the window today falls in.
-  function currentIndianFy() {
-    const now = new Date();
-    const y = now.getFullYear();
-    const startYear = now.getMonth() >= 3 ? y : y - 1; // month 3 = April
-    return { start: `${startYear}-04-01`, end: `${startYear + 1}-03-31` };
-  }
+  type Section = "home" | "purchase" | "sale" | "payment" | "stock" | "reports";
+  let section = $state<Section>("home");
 
-  const def = currentIndianFy();
-  let startDate = $state(def.start);
-  let endDate = $state(def.end);
-  let busy = $state(false);
-  let error = $state<string | null>(null);
-
+  // Route guard: bounce to the correct earlier step if prerequisites are missing.
   onMount(() => {
     if (!auth.isAuthed) return void goto("/login");
     if (auth.needsSetup) return void goto("/setup");
-    if (!auth.needsFy) return void goto("/app");
+    if (auth.needsFy) return void goto("/fy");
   });
 
-  const label = $derived(
-    startDate.length >= 4 && endDate.length >= 4
-      ? `${startDate.slice(0, 4)}–${endDate.slice(0, 4)}`
-      : ""
+  const fyLabel = $derived(
+    auth.fy
+      ? `${auth.fy.start_date.slice(0, 4)}–${auth.fy.end_date.slice(0, 4)}`
+      : "—"
   );
 
-  async function submit(e: Event) {
-    e.preventDefault();
-    if (!startDate || !endDate) return;
-    if (new Date(endDate) <= new Date(startDate)) {
-      error = "End date must be after the start date.";
-      return;
-    }
-    busy = true;
-    error = null;
-    try {
-      await auth.createFy(startDate, endDate);
-      await goto("/app");
-    } catch (err) {
-      error =
-        err instanceof ApiError ? err.message : "Could not create the financial year.";
-    } finally {
-      busy = false;
-    }
+  const nav: { id: Section; label: string }[] = [
+    { id: "home", label: "Home" },
+    { id: "purchase", label: "Purchase" },
+    { id: "sale", label: "Sale" },
+    { id: "payment", label: "Payment / Received" },
+    { id: "stock", label: "Stock" },
+    { id: "reports", label: "Reports" },
+  ];
+
+  async function onCompanyChange(e: Event) {
+    const id = Number((e.target as HTMLSelectElement).value);
+    await auth.setCurrentCompany(id);
+  }
+
+  async function doLogout() {
+    await auth.logout();
+    await goto("/login");
   }
 </script>
 
-<main class="wrap">
-  <form class="card" onsubmit={submit}>
-    <h1>Set up your financial year</h1>
-    <p class="muted">
-      Every voucher is bound to the active financial year. You can close it and
-      roll into the next one later.
-    </p>
+<div class="shell">
+    <aside class="rail">
+        <div class="brand">Finora</div>
+        <nav>
+          {#each nav as item (item.id)}
+            <button
+                    class="navbtn"
+            class:active={ section === item.id }
+          onclick={ () => (section = item.id) }
+            >
+            {item.label}
+            </button>
+          {/each}
+        </nav>
+        <button class="logout" onclick={ doLogout }>Log out</button>
+    </aside>
 
-    <label class="field">
-      <span>Start date</span>
-      <input type="date" bind:value={startDate} />
-    </label>
+    <section class="main">
+        <header class="topbar">
+            <div class="ctx">
+              {#if auth.mode === "multi"}
+                <select class="company" onchange={ onCompanyChange }>
+                  {#each auth.companies as c (c.id)}
+                    <option value={ c.id } selected={ c.id === auth.currentCompany?.id }>
+                    {c.name}
+                    </option>
+                  {/each}
+                </select>
+              {:else}
+                <span class="company-static">{auth.currentCompany?.name ?? "—"}</span>
+              {/if}
+                <span class="fybadge">FY { fyLabel }</span>
+            </div>
+            <div class="user">{auth.user?.username ?? ""}</div>
+        </header>
 
-    <label class="field">
-      <span>End date</span>
-      <input type="date" bind:value={endDate} />
-    </label>
-
-    {#if label}<p class="tag">FY {label}</p>{/if}
-    {#if error}<p class="err">{error}</p>{/if}
-
-    <button class="opt" disabled={busy || !startDate || !endDate}>
-      {busy ? "Creating…" : "Start bookkeeping"}
-    </button>
-  </form>
-</main>
+        <div class="content">
+          {#if section === "home"}
+            <h1>Welcome{ auth.user ? `, ${auth.user.username}` : "" }</h1>
+            <p class="muted">
+                Company <strong>{auth.currentCompany?.name ?? "—"}</strong>, financial
+                year <strong>{fyLabel}</strong>. Pick a section from the left to begin.
+            </p>
+          {:else if section === "purchase"}
+            <h1>Purchase</h1>
+            <p class="muted">Purchase entry coming next.</p>
+          {:else if section === "sale"}
+            <h1>Sale</h1>
+            <p class="muted">Sale master entry — planned.</p>
+          {:else if section === "payment"}
+            <h1>Payment / Received</h1>
+            <p class="muted">Party reconciliation — planned.</p>
+          {:else if section === "stock"}
+            <h1>Stock</h1>
+            <p class="muted">Stock ledger & conversion — planned.</p>
+          {:else if section === "reports"}
+            <h1>Reports</h1>
+            <p class="muted">Filterable reports & daily sheet — planned.</p>
+          {/if}
+        </div>
+    </section>
+</div>
 
 <style>
-  .wrap { display: grid; place-items: center; height: 100vh; background: #0f1115; color: #e6e8ec; }
-  .card { display: flex; flex-direction: column; gap: 12px; width: 340px; padding: 28px;
-          background: #171a21; border-radius: 12px; }
-  h1 { margin: 0; font-size: 20px; }
-  .muted { color: #9aa0aa; font-size: 13px; margin: 0 0 4px; line-height: 1.45; }
-  .field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #9aa0aa; }
-  input { padding: 10px 12px; border-radius: 8px; border: 1px solid #2a2f3a;
-          background: #0f1115; color: #e6e8ec; font-size: 14px; }
-  .tag { align-self: flex-start; margin: 0; padding: 4px 10px; border-radius: 999px;
-         background: #16233b; color: #6ea8ff; font-size: 12px; font-weight: 600; }
-  .opt { margin-top: 4px; padding: 10px 12px; border-radius: 8px; border: 1px solid #2f6feb;
-         background: #2f6feb; color: #fff; font-size: 14px; cursor: pointer; }
-  .opt:disabled { opacity: .5; cursor: default; }
-  .err { color: #ff6b6b; font-size: 13px; margin: 0; }
+  :global(body) { margin: 0; }
+  .shell { display: grid; grid-template-columns: 220px 1fr; height: 100vh;
+           background: #0f1115; color: #e6e8ec;
+           font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif; }
+  .rail { display: flex; flex-direction: column; gap: 6px; padding: 16px 12px;
+          background: #12151c; border-right: 1px solid #1f2530; }
+  .brand { font-size: 18px; font-weight: 700; padding: 6px 8px 14px; color: #6ea8ff; }
+  nav { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+  .navbtn { text-align: left; padding: 10px 12px; border-radius: 8px; border: none;
+            background: transparent; color: #c3c8d2; font-size: 14px; cursor: pointer; }
+  .navbtn:hover { background: #1a1f28; }
+  .navbtn.active { background: #16233b; color: #6ea8ff; font-weight: 600; }
+  .logout { margin-top: auto; padding: 9px 12px; border-radius: 8px;
+            border: 1px solid #2a2f3a; background: transparent; color: #9aa0aa;
+            font-size: 13px; cursor: pointer; }
+  .logout:hover { border-color: #ff6b6b; color: #ff6b6b; }
+  .main { display: flex; flex-direction: column; min-width: 0; }
+  .topbar { display: flex; align-items: center; justify-content: space-between;
+            padding: 12px 20px; border-bottom: 1px solid #1f2530; background: #12151c; }
+  .ctx { display: flex; align-items: center; gap: 12px; }
+  .company { padding: 6px 10px; border-radius: 8px; border: 1px solid #2a2f3a;
+             background: #0f1115; color: #e6e8ec; font-size: 13px; }
+  .company-static { font-size: 14px; font-weight: 600; }
+  .fybadge { padding: 4px 10px; border-radius: 999px; background: #16233b;
+             color: #6ea8ff; font-size: 12px; font-weight: 600; }
+  .user { font-size: 13px; color: #9aa0aa; }
+  .content { padding: 28px; overflow: auto; }
+  h1 { margin: 0 0 8px; font-size: 22px; }
+  .muted { color: #9aa0aa; font-size: 14px; line-height: 1.5; margin: 0; }
 </style>

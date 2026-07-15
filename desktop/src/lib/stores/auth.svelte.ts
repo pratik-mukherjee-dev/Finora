@@ -7,7 +7,6 @@ import {
     request,
     setTokens,
 } from "$lib/api";
-
 import {load} from "@tauri-apps/plugin-store";
 
 type User = { user_id: number; username: string };
@@ -64,17 +63,16 @@ async function resolveCurrentCompany() {
 }
 
 async function loadContext() {
-  setting = await request<Setting>("/api/accounts/settings/");
-  companies = await request<Company[]>("/api/accounts/companies/");
-  const years = await request<FinancialYear[]>("/api/fy/");
-  const list = Array.isArray(years)
-    ? years
-    : ((years as { results?: FinancialYear[] })?.results ?? []);
-  fy = list.find((y) => y.is_active && !y.is_closed) ?? null;
-  await resolveCurrentCompany();
+    setting = await request<Setting>("/api/accounts/settings/");
+    companies = await request<Company[]>("/api/accounts/companies/");
+    const years = await request<FinancialYear[]>("/api/fy/");
+    // Tolerate a paginated {results:[]} shape if DRF pagination is ever enabled.
+    const list = Array.isArray(years)
+        ? years
+        : ((years as { results?: FinancialYear[] })?.results ?? []);
+    fy = list.find((y) => y.is_active && !y.is_closed) ?? null;
+    await resolveCurrentCompany();
 }
-
-
 
 export const auth = {
     get user() {
@@ -120,6 +118,7 @@ export const auth = {
         try {
             user = await request<User>("/api/accounts/auth/me/");
         } catch (e) {
+            // Only a genuine auth failure invalidates the session.
             console.error("[restore] /me/ failed, clearing session:", e);
             clearTokens();
             await persist(REFRESH_KEY, null);
@@ -127,16 +126,17 @@ export const auth = {
             ready = true;
             return;
         }
-        // If the token was rotated during the /me/ refresh-retry, persist the new one.
+        // Persist any refreshed token so the next launch starts from a valid one.
         await persist(REFRESH_KEY, getRefresh());
         try {
             await loadContext();
         } catch (e) {
-            console.error("[restore] loadContext failed (auth is valid):", e);
+            // Auth is valid but context failed transiently: keep the user signed in
+            // rather than bouncing them to /login or misrouting the gate.
+            console.error("[restore] loadContext failed (auth still valid):", e);
         }
         ready = true;
     },
-
 
     async register(username: string, password: string) {
         const r = await apiRegister(username, password);
@@ -179,24 +179,39 @@ export const auth = {
         await resolveCurrentCompany();
     },
 
-    /** First-run only: open the initial (active) financial year. */
-    /**
-     * Open the initial (active) financial year. Idempotent: if the server reports
-     * one already exists (a duplicate submit, or a prior run created it), adopt the
-     * existing active FY instead of failing. Only rethrows on a genuine failure.
-     */
     async ensureFy(startDate: string, endDate: string) {
+        const payload = {start_date: startDate, end_date: endDate};
+        console.log("[ensureFy] POST /api/fy/ payload:", JSON.stringify(payload));
         try {
             fy = await request<FinancialYear>("/api/fy/", {
                 method: "POST",
-                body: JSON.stringify({start_date: startDate, end_date: endDate}),
+                body: JSON.stringify(payload),
             });
+            console.log("[ensureFy] created:", fy);
         } catch (e) {
+            // Surface the exact server validation body.
+            const anyErr = e as { status?: number; message?: string; body?: unknown };
+            console.error(
+                "[ensureFy] POST failed:",
+                "status=", anyErr.status,
+                "message=", anyErr.message,
+                "body=", JSON.stringify(anyErr.body)
+            );
             const years = await request<FinancialYear[]>("/api/fy/");
-            fy = years.find((y) => y.is_active && !y.is_closed) ?? null;
+            console.log("[ensureFy] refetched years:", JSON.stringify(years));
+            const list = Array.isArray(years)
+                ? years
+                : ((years as { results?: FinancialYear[] })?.results ?? []);
+            fy = list.find((y) => y.is_active && !y.is_closed) ?? null;
             if (!fy) throw e;
         }
         return fy;
+    },
+
+
+    /** Backward-compatible alias used by routes/fy/+page.svelte. */
+    async createFy(startDate: string, endDate: string) {
+        return this.ensureFy(startDate, endDate);
     },
 
     async setCurrentCompany(id: number) {

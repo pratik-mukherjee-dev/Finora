@@ -41,12 +41,19 @@
     busy = true;
     error = null;
     try {
-      await auth.ensureFy(startDate, endDate);
+      // Idempotent: creates the FY, or adopts an existing active one (e.g. a
+      // prior click already inserted it). Sets auth.fy on success.
+      const fy = await auth.ensureFy(startDate, endDate);
+      if (!fy) {
+        error = "Could not confirm the financial year. Please retry.";
+        busy = false;
+        return;
+      }
       await goto("/app");
     } catch (err) {
       error =
         err instanceof ApiError ? err.message : "Could not create the financial year.";
-      busy = false; // on success we navigate away, so only reset on failure
+      busy = false; // only reset on failure; on success we navigate away
     }
   }
 </script>
