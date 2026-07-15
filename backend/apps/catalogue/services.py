@@ -5,11 +5,16 @@ from apps.common.exceptions import DomainError
 from .models import Item, ItemCategory, ItemCompanyMapping
 
 
+def _norm_unit(unit):
+    """Canonicalise a base unit so 'BAG', 'Bag' and 'bag' are the same value."""
+    return (unit or "pcs").strip().upper() or "PCS"
+
+
 @transaction.atomic
 def create_item(user, name, company=None, base_unit="pcs", rate=Decimal("0.00"),
                 category=None, opening_stock=Decimal("0.000")):
     item, _ = Item.objects.get_or_create(
-        user=user, name=name.strip(), defaults={"base_unit": base_unit}
+        user=user, name=name.strip(), defaults={"base_unit": _norm_unit(base_unit)}
     )
     if company:
         ItemCompanyMapping.objects.get_or_create(

@@ -1,8 +1,10 @@
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
 
 from apps.accounts.models import Company
+from apps.common.exceptions import DomainError
 from .models import Item, ItemCategory, ItemCompanyMapping
 from .serializers import (
     ItemSerializer, ItemCategorySerializer, ItemCompanyMappingSerializer,
@@ -22,11 +24,13 @@ class ItemViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         company_id = self.request.data.get("company")
         company = Company.objects.filter(user=self.request.user, pk=company_id).first()
-        services.create_item(
+        item = services.create_item(
             self.request.user, serializer.validated_data["name"],
             company=company,
             base_unit=serializer.validated_data.get("base_unit", "pcs"),
         )
+        # Bind the saved item so DRF serializes the real row (with id + mappings).
+        serializer.instance = item
 
     @action(detail=True, methods=["post"])
     def add_mapping(self, request, pk=None):
@@ -52,7 +56,7 @@ class ItemCategoryViewSet(viewsets.ModelViewSet):
         return ItemCategory.objects.filter(company__user=self.request.user)
 
 
-class ItemCompanyMappingViewSet(viewsets.ReadOnlyModelViewSet):
+class ItemCompanyMappingViewSet(viewsets.ModelViewSet):
     serializer_class = ItemCompanyMappingSerializer
     filterset_class = MappingFilter
 
@@ -60,3 +64,22 @@ class ItemCompanyMappingViewSet(viewsets.ReadOnlyModelViewSet):
         return ItemCompanyMapping.objects.filter(
             company__user=self.request.user
         ).select_related("item", "company", "category")
+
+    def perform_create(self, serializer):
+        # The item and company must belong to the requesting user. Reuse the
+        # domain service so get_or_create + stock seeding stay consistent.
+        item = serializer.validated_data["item"]
+        company = serializer.validated_data["company"]
+        if item.user_id != self.request.user.id or company.user_id != self.request.user.id:
+            raise ValidationError("Item or company does not belong to this user.")
+        try:
+            mapping = services.add_mapping(
+                item,
+                company,
+                rate=serializer.validated_data.get("rate", 0),
+                category=serializer.validated_data.get("category"),
+                opening_stock=serializer.validated_data.get("opening_stock", 0),
+            )
+        except DomainError as e:
+            raise ValidationError(str(e))
+        serializer.instance = mapping

@@ -11,7 +11,7 @@ class Item(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="items"
     )
     name = models.CharField(max_length=200)
-    base_unit = models.CharField(max_length=30, default="pcs")
+    base_unit = models.CharField(max_length=30, default="PCS")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

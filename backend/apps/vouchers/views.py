@@ -6,7 +6,10 @@ from apps.common.exceptions import FinancialYearLocked, DomainError
 from apps.financialyear.selectors import active_fy
 from apps.accounts.models import Company
 from apps.parties.models import Party
-from .models import SaleMaster, SaleDerived, Purchase, Received, Payment, VoucherNumberSeq
+from .models import (
+    SaleMaster, SaleDerived, Purchase, Received, Payment,
+    Allocation, VoucherNumberSeq,
+)
 from .serializers import (
     SaleMasterSerializer, SaleDerivedSerializer, PurchaseSerializer,
     ReceivedSerializer, PaymentSerializer, VoucherNumberSeqSerializer,
@@ -21,6 +24,42 @@ def _context(request):
     company = Company.objects.get(user=request.user, pk=request.data["company"])
     party = Party.objects.get(user=request.user, pk=request.data["party"])
     return fy, company, party
+
+
+def _allocation_rows(settlement_type, settlement_id):
+    """Allocations for a settlement, enriched with each bill's number/date."""
+    allocs = Allocation.objects.filter(
+        settlement_type=settlement_type,
+        settlement_id=settlement_id,
+        is_reversal=False,
+    ).order_by("id")
+
+    bill_model = {"SALE": SaleMaster, "PURCHASE": Purchase}
+    rows = []
+    for a in allocs:
+        model = bill_model.get(a.bill_type)
+        bill = model.objects.filter(pk=a.bill_id).first() if model else None
+        rows.append({
+            "id": a.id,
+            "bill_type": a.bill_type,
+            "bill_id": a.bill_id,
+            "bill_number": bill.number if bill else None,
+            "bill_date": bill.date if bill else None,
+            "bill_total": bill.total_amount if bill else None,
+            "amount": a.amount,
+        })
+    return rows
+
+
+def _apply_history_filters(qs, request):
+    """Optional ?company= and ?party= narrowing for history lists."""
+    company_id = request.query_params.get("company")
+    party_id = request.query_params.get("party")
+    if company_id:
+        qs = qs.filter(company_id=company_id)
+    if party_id:
+        qs = qs.filter(party_id=party_id)
+    return qs
 
 
 class SaleMasterViewSet(
@@ -65,7 +104,10 @@ class PurchaseViewSet(
     serializer_class = PurchaseSerializer
 
     def get_queryset(self):
-        return Purchase.objects.filter(company__user=self.request.user).prefetch_related("lines")
+        qs = Purchase.objects.filter(
+            company__user=self.request.user
+        ).select_related("party").prefetch_related("lines")
+        return _apply_history_filters(qs, self.request)
 
     def create(self, request):
         fy, company, party = _context(request)
@@ -87,7 +129,10 @@ class ReceivedViewSet(
     serializer_class = ReceivedSerializer
 
     def get_queryset(self):
-        return Received.objects.filter(company__user=self.request.user)
+        qs = Received.objects.filter(
+            company__user=self.request.user
+        ).select_related("party")
+        return _apply_history_filters(qs, self.request)
 
     def create(self, request):
         fy, company, party = _context(request)
@@ -95,7 +140,14 @@ class ReceivedViewSet(
             request.user, company, fy, party, request.data["date"],
             request.data["amount"], number=request.data.get("number"),
         )
-        return Response(self.get_serializer(r).data, status=201)
+        data = self.get_serializer(r).data
+        data["allocations"] = _allocation_rows("RECEIVED", r.id)
+        return Response(data, status=201)
+
+    @action(detail=True, methods=["get"])
+    def allocations(self, request, pk=None):
+        r = self.get_object()
+        return Response(_allocation_rows("RECEIVED", r.id))
 
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
@@ -109,7 +161,10 @@ class PaymentViewSet(
     serializer_class = PaymentSerializer
 
     def get_queryset(self):
-        return Payment.objects.filter(company__user=self.request.user)
+        qs = Payment.objects.filter(
+            company__user=self.request.user
+        ).select_related("party")
+        return _apply_history_filters(qs, self.request)
 
     def create(self, request):
         fy, company, party = _context(request)
@@ -117,7 +172,14 @@ class PaymentViewSet(
             request.user, company, fy, party, request.data["date"],
             request.data["amount"], number=request.data.get("number"),
         )
-        return Response(self.get_serializer(p).data, status=201)
+        data = self.get_serializer(p).data
+        data["allocations"] = _allocation_rows("PAYMENT", p.id)
+        return Response(data, status=201)
+
+    @action(detail=True, methods=["get"])
+    def allocations(self, request, pk=None):
+        p = self.get_object()
+        return Response(_allocation_rows("PAYMENT", p.id))
 
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):

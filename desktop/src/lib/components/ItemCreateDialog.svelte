@@ -49,11 +49,17 @@
         node.focus();
     }
 
+    // Only cancel when the interaction both starts and ends on the backdrop
+    // itself. A plain onmousedown on the backdrop also fires while dragging a
+    // selection out of an input, and (because mousedown bubbles) closes the
+    // dialog on any inner click — so guard on the target and use click.
+    function onBackdropClick(e: MouseEvent) {
+        if (e.target === e.currentTarget) oncancel();
+    }
 </script>
 
-<div class="backdrop" role="presentation" onmousedown={oncancel}>
-    <form class="dialog" onmousedown={(e) => { if (e.target === e.currentTarget) oncancel(); }}
-          onsubmit={save}>
+<div class="backdrop" role="presentation" onclick={onBackdropClick}>
+    <form class="dialog" onsubmit={save}>
         <h2>New item</h2>
         <p class="muted">Mapped to current company.</p>
         <input bind:value={name} placeholder="Item name" use:focusOnMount/>
