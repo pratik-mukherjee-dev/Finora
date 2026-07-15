@@ -104,9 +104,15 @@ REST_FRAMEWORK = {
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=12),      # generous: offline-first desktop
     "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
-    "ROTATE_REFRESH_TOKENS": True,
+    # Rotation is intentionally OFF: this is a single-user offline app with no
+    # token_blacklist app installed. With rotation ON, each refresh issues a new
+    # refresh token; the desktop client persisted only the original, so after the
+    # first in-memory rotation the stored token went stale and the next launch
+    # failed to refresh (401 on /me/), stranding the user on the FY setup screen.
+    "ROTATE_REFRESH_TOKENS": False,
     "UPDATE_LAST_LOGIN": True,
 }
+
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
