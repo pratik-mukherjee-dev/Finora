@@ -1,3 +1,4 @@
+from django.utils import timezone
 from decimal import Decimal, ROUND_HALF_UP, getcontext
 from apps.ledgers.models import Ledger
 from ..models import VoucherCharge
@@ -98,9 +99,6 @@ def persist_charges(voucher_type, voucher_id, resolved_charges):
     ]
     VoucherCharge.objects.bulk_create(objs)
     return objs
-
-
-from django.utils import timezone
 
 
 def cancel_charges(voucher_type, voucher_id, user=None):

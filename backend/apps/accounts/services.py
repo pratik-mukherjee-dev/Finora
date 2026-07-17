@@ -1,5 +1,5 @@
 from django.db import transaction
-
+from apps.ledgers.services import seed_default_ledgers
 from ..common.exceptions import LicenseError, DomainError
 from .models import Company, UserCompanySetting, License, User
 
@@ -28,6 +28,7 @@ def register_first_user(username, password):
         segregation_enabled=False,
         is_mode_locked=True,
     )
+    seed_default_ledgers(user)
     return user
 
 

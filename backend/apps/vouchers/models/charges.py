@@ -6,9 +6,11 @@ from apps.common.models import SoftCancelModel
 class VoucherCharge(SoftCancelModel):
     SALE = 'SALE'
     PURCHASE = 'PURCHASE'
+    SALE_DERIVED = 'SALE_DERIVED'
     VOUCHER_TYPE_CHOICES = (
         (SALE, 'Sale'),
         (PURCHASE, 'Purchase'),
+        (SALE_DERIVED, 'Sale Derived'),
     )
 
     DISCOUNT = "DISCOUNT"
