@@ -14,6 +14,7 @@ from .serializers import (
     SaleMasterSerializer, SaleDerivedSerializer, PurchaseSerializer,
     ReceivedSerializer, PaymentSerializer, VoucherNumberSeqSerializer,
 )
+from .selectors import open_bills_preview
 from . import services
 
 
@@ -154,6 +155,13 @@ class ReceivedViewSet(
         r = services.cancel_received(request.user, pk)
         return Response(self.get_serializer(r).data)
 
+    @action(detail=False, methods=["get"])
+    def open_bills(self, request):
+        """Live preview of open sales this receipt would settle (oldest->latest)."""
+        party = Party.objects.get(user=request.user, pk=request.query_params["party"])
+        return Response(open_bills_preview(party, "RECEIVED"))
+
+
 
 class PaymentViewSet(
     mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet
@@ -185,6 +193,12 @@ class PaymentViewSet(
     def cancel(self, request, pk=None):
         p = services.cancel_payment(request.user, pk)
         return Response(self.get_serializer(p).data)
+
+    @action(detail=False, methods=["get"])
+    def open_bills(self, request):
+        """Live preview of open purchases this payment would settle (oldest->latest)."""
+        party = Party.objects.get(user=request.user, pk=request.query_params["party"])
+        return Response(open_bills_preview(party, "PAYMENT"))
 
 
 class VoucherNumberSeqViewSet(viewsets.ModelViewSet):

@@ -20,6 +20,14 @@ def _params(request):
     }
 
 
+class DashboardView(APIView):
+    def get(self, request):
+        date = request.query_params.get("date")
+        company = request.query_params.get("company")
+        return Response(selectors.dashboard(request.user, date, company))
+
+
+
 class SalesReportView(APIView):
     def get(self, request):
         f = _params(request)

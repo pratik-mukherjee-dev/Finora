@@ -5,6 +5,7 @@
     import {request, type Suggestion} from "$lib/api";
     import SmartLookup from "$lib/components/SmartLookup.svelte";
     import PartyCreateDialog from "$lib/components/PartyCreateDialog.svelte";
+    import {registerScreen} from "$lib/shell/useScreen.svelte";
 
     onMount(() => {
         if (!auth.isAuthed) return void goto("/login");
@@ -14,63 +15,68 @@
     });
 
     type Kind = "PAYMENT" | "RECEIVED";
-
     type Allocation = {
-        id: number; bill_type: string; bill_id: number;
-        bill_number: string | null; bill_date: string | null;
-        bill_total: number | null; amount: number;
+        id: number; bill_type: string; bill_id: number; bill_number: string | null;
+        bill_date: string | null; bill_total: number | null; amount: number;
     };
-    type SettleResult = {
-        id: number; number: string; amount: number; allocations: Allocation[];
-    };
+    type SettleResult = { id: number; number: string; amount: number; allocations: Allocation[]; };
     type Voucher = {
-        id: number; party: number; party_name: string;
-        number: string; date: string; amount: number; is_cancelled: boolean;
+        id: number; party: number; party_name: string; number: string;
+        date: string; amount: number; is_cancelled: boolean;
     };
+    type OpenBill = {
+        bill_type: string; bill_id: number; number: string;
+        date: string; total: number; settled: number; open: number;
+    };
+    type OpenBills = { outstanding_total: number; bills: OpenBill[] };
 
     const today = new Date().toISOString().slice(0, 10);
-
     let kind = $state<Kind>("PAYMENT");
     let party = $state<Suggestion | null>(null);
     let date = $state(today);
     let amount = $state("0");
-
     let saving = $state(false);
     let error = $state<string | null>(null);
     let result = $state<SettleResult | null>(null);
-
     let history = $state<Voucher[]>([]);
     let loadingHistory = $state(false);
     let selectedId = $state<number | null>(null);
-
+    let preview = $state<OpenBills | null>(null);
+    let loadingPreview = $state(false);
     let partyDialog = $state<string | null>(null);
 
     const companyId = $derived(auth.currentCompany?.id ?? null);
-    const endpoint = $derived(
-        kind === "PAYMENT" ? "/api/vouchers/payments/" : "/api/vouchers/received/"
-    );
+    const endpoint = $derived(kind === "PAYMENT" ? "/api/vouchers/payments/" : "/api/vouchers/received/");
     const canSave = $derived(!!party && !!companyId && Number(amount) > 0 && !saving);
+    const allocated = $derived((result?.allocations ?? []).reduce((s, a) => s + (Number(a.amount) || 0), 0));
+    const unallocated = $derived(result ? Math.max(0, (Number(result.amount) || 0) - allocated) : 0);
 
-    const allocated = $derived(
-        (result?.allocations ?? []).reduce((s, a) => s + (Number(a.amount) || 0), 0)
-    );
-    const unallocated = $derived(
-        result ? Math.max(0, (Number(result.amount) || 0) - allocated) : 0
-    );
+    // Live preview: how much of `amount` will settle which open bills (oldest->latest).
+    const previewPlan = $derived.by(() => {
+        if (!preview) return [];
+        let remaining = Number(amount) || 0;
+        return preview.bills.map((b) => {
+            const take = Math.min(remaining, Number(b.open));
+            remaining = Math.max(0, remaining - take);
+            return {...b, willSettle: take};
+        });
+    });
 
     function onPartySelect(s: Suggestion) {
         party = s;
         void loadHistory();
+        void loadPreview();
     }
 
-    function onPartyCreate(typed: string) {
-        partyDialog = typed;
+    function onPartyCreate(t: string) {
+        partyDialog = t;
     }
 
     function onPartyCreated(p: Suggestion) {
         party = p;
         partyDialog = null;
         void loadHistory();
+        void loadPreview();
     }
 
     function setKind(k: Kind) {
@@ -80,6 +86,7 @@
         error = null;
         selectedId = null;
         void loadHistory();
+        void loadPreview();
     }
 
     async function loadHistory() {
@@ -88,14 +95,30 @@
         try {
             const p = new URLSearchParams({company: String(companyId)});
             if (party) p.set("party", String(party.id));
-            const rows = await request<Voucher[] | { results?: Voucher[] }>(
-                `${endpoint}?${p.toString()}`
-            );
+            const rows = await request<Voucher[] | { results?: Voucher[] }>(`${endpoint}?${p.toString()}`);
             history = Array.isArray(rows) ? rows : (rows?.results ?? []);
-        } catch (e) {
+        } catch {
             history = [];
         } finally {
             loadingHistory = false;
+        }
+    }
+
+    // New backend contract: GET /api/vouchers/{payments|received}/open_bills/?party=
+    async function loadPreview() {
+        if (!party) {
+            preview = null;
+            return;
+        }
+        loadingPreview = true;
+        try {
+            const p = new URLSearchParams({party: String(party.id)});
+            preview = await request<OpenBills>(`${endpoint}open_bills/?${p.toString()}`);
+            shell.activeTab = "allocation";
+        } catch {
+            preview = null;
+        } finally {
+            loadingPreview = false;
         }
     }
 
@@ -104,17 +127,15 @@
         error = null;
         try {
             const allocs = await request<Allocation[]>(`${endpoint}${v.id}/allocations/`);
-            result = {
-                id: v.id, number: v.number, amount: Number(v.amount),
-                allocations: allocs ?? [],
-            };
+            result = {id: v.id, number: v.number, amount: Number(v.amount), allocations: allocs ?? []};
+            shell.activeTab = "allocation";
         } catch (e) {
             error = e instanceof Error ? e.message : "Could not load allocations.";
         }
     }
 
     async function save() {
-        if (!party || !companyId) return;
+        if (!party || !companyId || saving) return;
         saving = true;
         error = null;
         result = null;
@@ -122,205 +143,138 @@
         try {
             const res = await request<SettleResult>(endpoint, {
                 method: "POST",
-                body: JSON.stringify({
-                    company: companyId, party: party.id, date,
-                    amount: Number(amount), number: null,
-                }),
+                body: JSON.stringify({company: companyId, party: party.id, date, amount: Number(amount), number: null}),
             });
-            result = {
-                id: res.id, number: res.number, amount: Number(res.amount),
-                allocations: res.allocations ?? [],
-            };
+            result = {id: res.id, number: res.number, amount: Number(res.amount), allocations: res.allocations ?? []};
             amount = "0";
             await loadHistory();
+            await loadPreview();
+            shell.activeTab = "allocation";
         } catch (e) {
             error = e instanceof Error ? e.message : "Could not save.";
         } finally {
             saving = false;
         }
     }
+
+    const shell = registerScreen(() => ({
+        title: "Settle",
+        actions: [
+            {id: "set-save", label: "Save", icon: "✓", shortcut: "Ctrl+Enter", run: save},
+        ],
+        shortcuts: [
+            {id: "set-k-save", keychord: "ctrl+enter", label: "Save", run: save},
+        ],
+        panel: [
+            {id: "allocation", title: "Allocation", body: allocationPanel},
+            {id: "history", title: "History", body: historyPanel},
+        ],
+    }));
 </script>
 
-<div class="page">
-    <div class="wrap">
-        <header class="bar">
-            <button class="back" onclick={ () => goto("/app") }>← Home</button>
-            <h1>{kind === "PAYMENT" ? "Payment" : "Received"}</h1>
-            <div class="ctx"><span class="chip">{auth.currentCompany?.name ?? "—"}</span></div>
-        </header>
-
-        <div class="toggle">
-            <button class:active={kind === "PAYMENT"} onclick={() => setKind("PAYMENT")}>Payment</button>
-            <button class:active={kind === "RECEIVED"} onclick={() => setKind("RECEIVED")}>Received</button>
-        </div>
-        <p class="sub">
-            {kind === "PAYMENT"
-                ? "Pay a vendor. Auto-settles open purchases oldest → latest."
-                : "Receive from a customer. Auto-settles open sales oldest → latest."}
-        </p>
-
-        {#if error}
-            <div class="banner err">{error}</div>
-        {/if}
-
-        <section class="head">
-            <div class="field">
-                <label for="party">Party</label>
-                <SmartLookup type="PARTY" placeholder="Search or create party…"
-                             value={party} onselect={onPartySelect} oncreate={onPartyCreate}/>
-            </div>
-            <div class="field amt">
-                <label for="amount">Amount</label>
-                <input id="amount" class="num" type="number" min="0" step="0.01" bind:value={amount}/>
-            </div>
-            <div class="field date">
-                <label for="date">Date</label>
-                <input id="date" type="date" bind:value={date}/>
-            </div>
-        </section>
-
-        <footer class="foot">
-            <button class="save" disabled={ !canSave } onclick={ save }>
-                {saving ? "Saving…" : `Save ${kind === "PAYMENT" ? "payment" : "receipt"}`}
-            </button>
-        </footer>
-
-        {#if result}
-            <section class="result">
-                <div class="banner ok">
-                    <strong>#{result.number}</strong> · amount <strong>{result.amount.toFixed(2)}</strong>
-                </div>
-                <h2>Allocation</h2>
-                {#if result.allocations.length === 0}
-                    <p class="muted">
-                        No open {kind === "PAYMENT" ? "purchases" : "sales"} settled.
-                        Amount kept on account.
-                    </p>
-                {:else}
-                    <div class="alloc">
-                        <div class="ahead">
-                            <span>Bill</span><span>Date</span><span>Bill total</span><span>Settled</span>
-                        </div>
-                        {#each result.allocations as a (a.id)}
-                            <div class="arow">
-                                <span>#{a.bill_number ?? a.bill_id}</span>
-                                <span>{a.bill_date ?? "—"}</span>
-                                <span class="rt">{a.bill_total != null ? Number(a.bill_total).toFixed(2) : "—"}</span>
-                                <span class="rt">{Number(a.amount).toFixed(2)}</span>
-                            </div>
-                        {/each}
-                    </div>
-                    <div class="summary">
-                        <span>Allocated <strong>{allocated.toFixed(2)}</strong></span>
-                        {#if unallocated > 0}
-                            <span class="adv">On account <strong>{unallocated.toFixed(2)}</strong></span>
-                        {/if}
-                    </div>
-                {/if}
-            </section>
-        {/if}
-    </div>
-
-    <aside class="side">
-        <div class="sidehead">
-            <h2>{kind === "PAYMENT" ? "Payments" : "Receipts"}{party ? ` · ${party.name}` : ""}</h2>
-            <button class="refresh" onclick={loadHistory} disabled={loadingHistory}>
-                {loadingHistory ? "…" : "↻"}
-            </button>
-        </div>
-        {#if history.length === 0}
-            <p class="muted">{loadingHistory ? "Loading…" : "No records."}</p>
+{#snippet allocationPanel()}
+    {#if result}
+        <div class="banner ok">#{result.number} · {result.amount.toFixed(2)}</div>
+        <h3>Settled</h3>
+        {#if result.allocations.length === 0}
+            <p class="muted">No open bills settled. Kept on account.</p>
         {:else}
-            <ul class="hlist">
-                {#each history as v (v.id)}
-                    <li class:cancelled={v.is_cancelled} class:active={v.id === selectedId}>
-                        <button class="hrow" onclick={() => viewVoucher(v)}>
-                            <div class="hline1">
-                                <span class="hnum">#{v.number}</span>
-                                <span class="htot">{Number(v.amount).toFixed(2)}</span>
-                            </div>
-                            <div class="hline2">
-                                <span>{v.party_name}</span>
-                                <span class="hdate">{v.date}</span>
-                            </div>
-                            {#if v.is_cancelled}<span class="badge">cancelled</span>{/if}
-                        </button>
-                    </li>
-                {/each}
-            </ul>
+            {#each result.allocations as a (a.id)}
+                <div class="arow"><span>#{a.bill_number ?? a.bill_id}</span>
+                    <span class="rt">{Number(a.amount).toFixed(2)}</span></div>
+            {/each}
+            <div class="sumline"><span>Allocated</span><strong>{allocated.toFixed(2)}</strong></div>
+            {#if unallocated > 0}<div class="sumline adv"><span>On account</span><strong>{unallocated.toFixed(2)}</strong></div>{/if}
         {/if}
-    </aside>
+    {:else if !party}
+        <p class="muted">Pick a party to preview open {kind === "PAYMENT" ? "purchases" : "sales"}.</p>
+    {:else if loadingPreview}
+        <p class="muted">Loading open bills…</p>
+    {:else if preview}
+        <h3>Open bills · outstanding {Number(preview.outstanding_total).toFixed(2)}</h3>
+        {#if preview.bills.length === 0}
+            <p class="muted">Nothing outstanding.</p>
+        {:else}
+            <div class="ahead"><span>Bill</span><span class="rt">Open</span><span class="rt">Will settle</span></div>
+            {#each previewPlan as b (b.bill_id)}
+                <div class="arow"><span>#{b.number}</span>
+                    <span class="rt">{Number(b.open).toFixed(2)}</span>
+                    <span class="rt" class:hot={b.willSettle > 0}>{b.willSettle.toFixed(2)}</span></div>
+            {/each}
+        {/if}
+    {/if}
+{/snippet}
+
+{#snippet historyPanel()}
+    <div class="sidehead">
+        <span class="muted">{kind === "PAYMENT" ? "Payments" : "Receipts"}{party ? ` · ${party.name}` : ""}</span>
+        <button class="refresh" onclick={loadHistory} disabled={loadingHistory}>{loadingHistory ? "…" : "↻"}</button>
+    </div>
+    {#if history.length === 0}
+        <p class="muted">{loadingHistory ? "Loading…" : "No records."}</p>
+    {:else}
+        <ul class="hlist">
+            {#each history as v (v.id)}
+                <li class:cancelled={v.is_cancelled} class:active={v.id === selectedId}>
+                    <button class="hrow-btn" onclick={() => viewVoucher(v)}>
+                        <div class="hline1"><span>#{v.number}</span><span class="htot">{Number(v.amount).toFixed(2)}</span></div>
+                        <div class="hline2"><span>{v.party_name}</span><span>{v.date}</span></div>
+                        {#if v.is_cancelled}<span class="badge">cancelled</span>{/if}
+                    </button>
+                </li>
+            {/each}
+        </ul>
+    {/if}
+{/snippet}
+
+<div class="wrap">
+    <div class="toggle">
+        <button class:active={kind === "PAYMENT"} onclick={() => setKind("PAYMENT")}>Payment</button>
+        <button class:active={kind === "RECEIVED"} onclick={() => setKind("RECEIVED")}>Received</button>
+    </div>
+    <p class="sub">{kind === "PAYMENT"
+        ? "Pay a vendor. Auto-settles open purchases oldest → latest."
+        : "Receive from a customer. Auto-settles open sales oldest → latest."}</p>
+
+    {#if error}<div class="banner err">{error}</div>{/if}
+
+    <section class="head">
+        <div class="field">
+            <label for="party">Party</label>
+            <SmartLookup type="PARTY" placeholder="Search or create party…" value={party}
+                         onselect={onPartySelect} oncreate={onPartyCreate}/>
+        </div>
+        <div class="field amt">
+            <label for="amount">Amount</label>
+            <input id="amount" class="num" type="number" min="0" step="0.01" bind:value={amount}/>
+        </div>
+        <div class="field date">
+            <label for="date">Date</label>
+            <input id="date" type="date" bind:value={date}/>
+        </div>
+    </section>
+
+    <footer class="foot">
+        <button class="save" disabled={!canSave} onclick={save}>
+            {saving ? "Saving…" : `Save ${kind === "PAYMENT" ? "payment" : "receipt"}`} <kbd>Ctrl ⏎</kbd>
+        </button>
+    </footer>
 </div>
 
 {#if partyDialog !== null}
-    <PartyCreateDialog initialName={ partyDialog } oncreated={ onPartyCreated }
-                       oncancel={ () => (partyDialog = null) }/>
-{/if}
+    <PartyCreateDialog initialName={partyDialog} oncreated={onPartyCreated} oncancel={() => (partyDialog = null)}/>{/if}
 
 <style>
-    :global(body) {
-        margin: 0;
-    }
-
-    .page {
-        display: grid;
-        grid-template-columns: 1fr 300px;
-        min-height: 100vh;
-        background: #0f1115;
-        color: #e6e8ec;
-        font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-    }
-
     .wrap {
         padding: 20px 28px 40px;
         box-sizing: border-box;
-        min-width: 0;
-    }
-
-    .bar {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        margin-bottom: 16px;
-    }
-
-    .back {
-        background: transparent;
-        border: 1px solid #2a2f3a;
-        color: #c3c8d2;
-        padding: 6px 12px;
-        border-radius: 8px;
-        cursor: pointer;
-        font-size: 13px;
-    }
-
-    .back:hover {
-        border-color: #6ea8ff;
-        color: #6ea8ff;
-    }
-
-    h1 {
-        margin: 0;
-        font-size: 22px;
-    }
-
-    .ctx {
-        margin-left: auto;
-    }
-
-    .chip {
-        padding: 4px 12px;
-        border-radius: 999px;
-        background: #16233b;
-        color: #6ea8ff;
-        font-size: 12px;
-        font-weight: 600;
+        max-width: 760px;
     }
 
     .toggle {
         display: inline-flex;
-        border: 1px solid #2a2f3a;
-        border-radius: 8px;
+        border: 1px solid var(--border-hi);
+        border-radius: var(--radius);
         overflow: hidden;
         margin-bottom: 8px;
     }
@@ -329,46 +283,45 @@
         padding: 8px 18px;
         background: transparent;
         border: none;
-        color: #9aa0aa;
+        color: var(--text-muted);
         cursor: pointer;
         font-size: 14px;
     }
 
     .toggle button.active {
-        background: #2f6feb;
+        background: var(--accent);
         color: #fff;
     }
 
     .sub {
-        color: #9aa0aa;
+        color: var(--text-muted);
         font-size: 13px;
         margin: 0 0 18px;
     }
 
     .banner {
         padding: 10px 14px;
-        border-radius: 8px;
+        border-radius: var(--radius);
         margin-bottom: 16px;
         font-size: 14px;
     }
 
     .banner.ok {
-        background: #13291d;
-        color: #6ee7a8;
-        border: 1px solid #1f5138;
+        background: var(--ok-soft);
+        color: var(--ok);
+        border: 1px solid var(--ok-border);
     }
 
     .banner.err {
-        background: #2a1517;
+        background: var(--danger-soft);
         color: #ff9b9b;
-        border: 1px solid #5a2a2e;
+        border: 1px solid var(--danger-border);
     }
 
     .head {
         display: flex;
         gap: 18px;
         margin-bottom: 20px;
-        max-width: 720px;
     }
 
     .field {
@@ -388,15 +341,15 @@
 
     label {
         font-size: 12px;
-        color: #9aa0aa;
+        color: var(--text-muted);
     }
 
     .num, input[type="date"] {
         padding: 8px 10px;
-        border-radius: 8px;
-        border: 1px solid #2a2f3a;
-        background: #0f1115;
-        color: #e6e8ec;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-hi);
+        background: var(--bg-app);
+        color: var(--text);
         font-size: 14px;
         box-sizing: border-box;
     }
@@ -409,15 +362,13 @@
     .foot {
         display: flex;
         justify-content: flex-end;
-        margin-bottom: 24px;
-        max-width: 720px;
     }
 
     .save {
         padding: 10px 20px;
-        border-radius: 8px;
-        border: 1px solid #2f6feb;
-        background: #2f6feb;
+        border-radius: var(--radius);
+        border: 1px solid var(--accent);
+        background: var(--accent);
         color: #fff;
         font-size: 14px;
         cursor: pointer;
@@ -428,92 +379,76 @@
         cursor: default;
     }
 
-    .result {
-        max-width: 720px;
+    kbd {
+        background: rgba(0, 0, 0, .25);
+        border: 1px solid var(--border-hi);
+        border-radius: 4px;
+        padding: 0 4px;
+        font-size: 11px;
+        margin-left: 6px;
     }
 
-    h2 {
-        font-size: 16px;
-        margin: 8px 0 12px;
+    /* panels */
+    h3 {
+        font-size: 13px;
+        margin: 8px 0;
+        color: var(--text);
     }
 
     .muted {
-        color: #9aa0aa;
-        font-size: 14px;
-    }
-
-    .alloc {
-        border: 1px solid #1f2530;
-        border-radius: 10px;
-        overflow: hidden;
-        background: #12151c;
+        color: var(--text-muted);
+        font-size: 13px;
     }
 
     .ahead, .arow {
         display: grid;
-        grid-template-columns: 1fr 130px 140px 140px;
-        gap: 12px;
-        padding: 10px 14px;
-        font-size: 14px;
+        grid-template-columns: 1fr auto auto;
+        gap: 10px;
+        font-size: 13px;
+        padding: 5px 0;
     }
 
     .ahead {
-        color: #9aa0aa;
-        font-size: 12px;
-        border-bottom: 1px solid #1f2530;
-    }
-
-    .arow {
-        border-bottom: 1px solid #171b23;
+        color: var(--text-muted);
+        font-size: 11px;
+        border-bottom: 1px solid var(--border);
     }
 
     .rt {
         text-align: right;
     }
 
-    .summary {
+    .hot {
+        color: var(--ok);
+        font-weight: 600;
+    }
+
+    .sumline {
         display: flex;
-        justify-content: flex-end;
-        gap: 24px;
-        margin-top: 14px;
-        font-size: 14px;
-        color: #c3c8d2;
+        justify-content: space-between;
+        font-size: 13px;
+        margin-top: 8px;
     }
 
     .adv {
-        color: #ffc15c;
-    }
-
-    /* History panel */
-    .side {
-        border-left: 1px solid #1f2530;
-        background: #12151c;
-        padding: 18px 14px;
-        overflow: auto;
+        color: var(--warn);
     }
 
     .sidehead {
         display: flex;
-        align-items: center;
         justify-content: space-between;
+        align-items: center;
         margin-bottom: 10px;
-        gap: 8px;
-    }
-
-    .side h2 {
-        font-size: 14px;
-        margin: 0;
     }
 
     .refresh {
         background: transparent;
-        border: 1px solid #2a2f3a;
-        color: #9aa0aa;
+        border: 1px solid var(--border-hi);
+        color: var(--text-muted);
         width: 28px;
         height: 28px;
         border-radius: 6px;
         cursor: pointer;
-        flex-shrink: 0;
     }
 
     .hlist {
@@ -525,27 +460,23 @@
         gap: 6px;
     }
 
-    .hrow {
+    .hrow-btn {
         position: relative;
         width: 100%;
         text-align: left;
-        background: #0f1115;
-        border: 1px solid #1f2530;
-        border-radius: 8px;
+        background: var(--bg-app);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
         padding: 8px 10px;
         cursor: pointer;
-        color: #e6e8ec;
+        color: var(--text);
     }
 
-    .hrow:hover {
-        border-color: #34406b;
+    li.active .hrow-btn {
+        border-color: var(--accent);
     }
 
-    li.active .hrow {
-        border-color: #2f6feb;
-    }
-
-    li.cancelled .hrow {
+    li.cancelled .hrow-btn {
         opacity: .55;
     }
 
@@ -557,14 +488,14 @@
     }
 
     .htot {
-        color: #6ee7a8;
+        color: var(--ok);
     }
 
     .hline2 {
         display: flex;
         justify-content: space-between;
         font-size: 11px;
-        color: #9aa0aa;
+        color: var(--text-muted);
         margin-top: 2px;
     }
 
@@ -575,7 +506,7 @@
         font-size: 9px;
         text-transform: uppercase;
         color: #ff9b9b;
-        background: #2a1517;
+        background: var(--danger-soft);
         padding: 1px 5px;
         border-radius: 4px;
     }

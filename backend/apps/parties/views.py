@@ -6,7 +6,7 @@ from rest_framework.exceptions import ValidationError
 
 from .models import Party
 from .serializers import PartySerializer, PartyLedgerSerializer
-from .selectors import ledger_entries
+from .selectors import ledger_entries, current_balance
 from . import services
 
 
@@ -36,3 +36,8 @@ class PartyViewSet(viewsets.ModelViewSet):
     def ledger(self, request, pk=None):
         party = self.get_object()
         return Response(PartyLedgerSerializer(ledger_entries(party), many=True).data)
+
+    @action(detail=True, methods=["get"])
+    def balance(self, request, pk=None):
+        party = self.get_object()
+        return Response({"party": party.id, "balance": current_balance(party)})

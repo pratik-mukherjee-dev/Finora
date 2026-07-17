@@ -6,6 +6,7 @@
     import SmartLookup from "$lib/components/SmartLookup.svelte";
     import PartyCreateDialog from "$lib/components/PartyCreateDialog.svelte";
     import ItemCreateDialog from "$lib/components/ItemCreateDialog.svelte";
+    import {registerScreen} from "$lib/shell/useScreen.svelte";
 
     onMount(() => {
         if (!auth.isAuthed) return void goto("/login");
@@ -14,91 +15,59 @@
         void loadHistory();
     });
 
-    type Mapping = {
-        id: number; item: number; item_name: string;
-        company: number; rate: number; stock: number;
-    };
-
+    type Mapping = { id: number; item: number; item_name: string; company: number; rate: number; stock: number; };
     type Line = {
-        key: number;
-        item: Suggestion | null;
-        mapping: number | null;
-        qty: string;
-        rate: string;
-        amount: string;
-        resolving: boolean;
-        note: string;
-        noMapping: boolean;
-        creatingMapping: boolean;
+        key: number; item: Suggestion | null; mapping: number | null;
+        qty: string; rate: string; amount: string;
+        resolving: boolean; note: string; noMapping: boolean; creatingMapping: boolean;
     };
-
-    type PurchaseLine = {
-        id: number; item: number; item_name: string;
-        mapping: number; qty: number; rate: number; amount: number;
-    };
+    type PurchaseLine = { id: number; item: number; item_name: string; mapping: number; qty: number; rate: number; amount: number; };
     type Purchase = {
         id: number; company: number; party: number; party_name: string;
-        number: string; date: string; total_amount: number;
-        is_cancelled: boolean; lines: PurchaseLine[];
+        number: string; date: string; total_amount: number; is_cancelled: boolean; lines: PurchaseLine[];
     };
 
     let seq = 0;
     const newLine = (): Line => ({
         key: ++seq, item: null, mapping: null, qty: "1", rate: "0",
-        amount: "0.00", resolving: false, note: "", noMapping: false,
-        creatingMapping: false,
+        amount: "0.00", resolving: false, note: "", noMapping: false, creatingMapping: false,
     });
 
     const today = new Date().toISOString().slice(0, 10);
     let party = $state<Suggestion | null>(null);
     let date = $state(today);
     let lines = $state<Line[]>([newLine()]);
-
     let saving = $state(false);
     let error = $state<string | null>(null);
     let saved = $state<{ number: string; total_amount: number } | null>(null);
-
-    // History + edit state
     let history = $state<Purchase[]>([]);
     let loadingHistory = $state(false);
-    let editingId = $state<number | null>(null);   // purchase being edited (will be cancelled on save)
-
+    let editingId = $state<number | null>(null);
     let partyDialog = $state<string | null>(null);
     let itemDialog = $state<{ text: string; lineKey: number } | null>(null);
 
     const companyId = $derived(auth.currentCompany?.id ?? null);
-
-    const total = $derived(
-        lines.reduce((sum, l) => sum + (Number(l.amount) || 0), 0)
-    );
-    const canSave = $derived(
-        !!party && !!companyId &&
-        lines.some((l) => l.mapping && Number(l.qty) > 0) && !saving
-    );
-
+    const total = $derived(lines.reduce((s, l) => s + (Number(l.amount) || 0), 0));
+    const canSave = $derived(!!party && !!companyId && lines.some((l) => l.mapping && Number(l.qty) > 0) && !saving);
     const round2 = (n: number) => (Math.round(n * 100) / 100).toFixed(2);
 
-    function onQtyOrRate(line: Line) {
-        line.amount = round2((Number(line.qty) || 0) * (Number(line.rate) || 0));
+    function onQtyOrRate(l: Line) {
+        l.amount = round2((Number(l.qty) || 0) * (Number(l.rate) || 0));
     }
 
-    function onAmount(line: Line) {
-        const qty = Number(line.qty) || 0;
-        line.rate = qty > 0 ? round2((Number(line.amount) || 0) / qty) : "0";
+    function onAmount(l: Line) {
+        const q = Number(l.qty) || 0;
+        l.rate = q > 0 ? round2((Number(l.amount) || 0) / q) : "0";
     }
 
-    // ---- History ----
     async function loadHistory() {
         if (!companyId) return;
         loadingHistory = true;
         try {
             const p = new URLSearchParams({company: String(companyId)});
-            const rows = await request<Purchase[] | { results?: Purchase[] }>(
-                `/api/vouchers/purchases/?${p.toString()}`
-            );
+            const rows = await request<Purchase[] | { results?: Purchase[] }>(`/api/vouchers/purchases/?${p.toString()}`);
             history = Array.isArray(rows) ? rows : (rows?.results ?? []);
-        } catch (e) {
-            // non-fatal; leave history empty
+        } catch {
             history = [];
         } finally {
             loadingHistory = false;
@@ -110,22 +79,17 @@
         error = null;
         saved = null;
         editingId = prow.id;
-        // Load party (id + name is enough for the payload).
         party = {id: prow.party, name: prow.party_name};
         date = prow.date;
         lines = prow.lines.map((pl) => ({
-            key: ++seq,
-            item: {id: pl.item, name: pl.item_name},
-            mapping: pl.mapping,
-            qty: String(pl.qty),
-            rate: String(pl.rate),
-            amount: round2(Number(pl.qty) * Number(pl.rate)),
+            key: ++seq, item: {id: pl.item, name: pl.item_name}, mapping: pl.mapping,
+            qty: String(pl.qty), rate: String(pl.rate), amount: round2(Number(pl.qty) * Number(pl.rate)),
             resolving: false, note: "", noMapping: false, creatingMapping: false,
         }));
         if (lines.length === 0) lines = [newLine()];
     }
 
-    function cancelEdit() {
+    function resetForm() {
         editingId = null;
         party = null;
         date = today;
@@ -134,13 +98,12 @@
         saved = null;
     }
 
-    // ---- Party ----
     function onPartySelect(s: Suggestion) {
         party = s;
     }
 
-    function onPartyCreate(typed: string) {
-        partyDialog = typed;
+    function onPartyCreate(t: string) {
+        partyDialog = t;
     }
 
     function onPartyCreated(p: Suggestion) {
@@ -148,7 +111,6 @@
         partyDialog = null;
     }
 
-    // ---- Item -> mapping ----
     async function resolveMapping(line: Line, itemId: number) {
         if (!companyId) return;
         line.resolving = true;
@@ -181,12 +143,7 @@
         try {
             const m = await request<Mapping>("/api/catalogue/mappings/", {
                 method: "POST",
-                body: JSON.stringify({
-                    item: line.item.id,
-                    company: companyId,
-                    rate: Number(line.rate) || 0,
-                    opening_stock: 0
-                }),
+                body: JSON.stringify({item: line.item.id, company: companyId, rate: Number(line.rate) || 0, opening_stock: 0}),
             });
             line.mapping = m.id;
             line.noMapping = false;
@@ -206,8 +163,8 @@
         void resolveMapping(line, s.id);
     }
 
-    function onItemCreate(line: Line, typed: string) {
-        itemDialog = {text: typed, lineKey: line.key};
+    function onItemCreate(line: Line, t: string) {
+        itemDialog = {text: t, lineKey: line.key};
     }
 
     function onItemCreated(i: Suggestion) {
@@ -228,32 +185,22 @@
     }
 
     async function save() {
-        if (!party || !companyId) return;
+        if (!party || !companyId || saving) return;
         saving = true;
         error = null;
         saved = null;
         try {
-            const payloadLines = lines
-                .filter((l) => l.mapping && Number(l.qty) > 0)
+            const payloadLines = lines.filter((l) => l.mapping && Number(l.qty) > 0)
                 .map((l) => ({mapping: l.mapping, qty: Number(l.qty), rate: Number(l.rate) || 0}));
             if (payloadLines.length === 0) {
                 error = "Add at least one item with a quantity.";
                 return;
             }
-            // Editing an existing purchase => cancel the original first (soft-cancel + reversals).
-            if (editingId != null) {
-                await request(`/api/vouchers/purchases/${editingId}/cancel/`, {method: "POST"});
-            }
-            const res = await request<{ number: string; total_amount: number }>(
-                "/api/vouchers/purchases/",
-                {
-                    method: "POST",
-                    body: JSON.stringify({
-                        company: companyId, party: party.id, date,
-                        number: null, lines: payloadLines,
-                    }),
-                }
-            );
+            if (editingId != null) await request(`/api/vouchers/purchases/${editingId}/cancel/`, {method: "POST"});
+            const res = await request<{ number: string; total_amount: number }>("/api/vouchers/purchases/", {
+                method: "POST",
+                body: JSON.stringify({company: companyId, party: party.id, date, number: null, lines: payloadLines}),
+            });
             saved = {number: res.number, total_amount: res.total_amount};
             editingId = null;
             lines = [newLine()];
@@ -264,210 +211,134 @@
             saving = false;
         }
     }
+
+    // Register title, quick actions, history panel, and shortcuts with the shell.
+    registerScreen(() => ({
+        title: "Purchase",
+        actions: [
+            {id: "pur-new", label: "New", icon: "＋", shortcut: "Ctrl+N", run: resetForm},
+            {id: "pur-add", label: "Add line", icon: "▸", shortcut: "Alt+A", run: addLine},
+            {id: "pur-save", label: "Save", icon: "✓", shortcut: "Ctrl+Enter", run: save},
+        ],
+        shortcuts: [
+            {id: "pur-k-new", keychord: "ctrl+n", label: "New", run: resetForm},
+            {id: "pur-k-add", keychord: "alt+a", label: "Add line", run: addLine},
+            {id: "pur-k-save", keychord: "ctrl+enter", label: "Save", run: save},
+        ],
+        panel: [{id: "history", title: "History", body: historyPanel}],
+    }));
 </script>
 
-<div class="page">
-    <div class="wrap">
-        <header class="bar">
-            <button class="back" onclick={ () => goto("/app") }>← Home</button>
-            <h1>Purchase</h1>
-            <div class="ctx"><span class="chip">{auth.currentCompany?.name ?? "—"}</span></div>
-        </header>
-
-        {#if editingId != null}
-            <div class="banner edit">
-                Editing purchase — saving will <strong>cancel the original</strong> and create a
-                replacement.
-                <button class="linkbtn" onclick={cancelEdit}>Discard</button>
-            </div>
-        {/if}
-        {#if saved}
-            <div class="banner ok">
-                Saved purchase <strong>#{ saved.number }</strong> · total
-                <strong>{saved.total_amount}</strong>.
-            </div>
-        {/if}
-        {#if error}
-            <div class="banner err">{error}</div>
-        {/if}
-
-        <section class="head">
-            <div class="field">
-                <label for="party">Party</label>
-                <SmartLookup type="PARTY" placeholder="Search or create party…"
-                             value={party} onselect={onPartySelect} oncreate={onPartyCreate}/>
-            </div>
-            <div class="field date">
-                <label for="date">Date</label>
-                <input id="date" type="date" bind:value={date}/>
-            </div>
-        </section>
-
-        <section class="grid">
-            <div class="ghead">
-                <span>Item</span><span>Qty</span><span>Rate</span><span>Amount</span><span></span>
-            </div>
-
-            {#each lines as line (line.key)}
-                <div class="grow">
-                    <div class="cell item">
-                        <SmartLookup type="ITEM" placeholder="Search or create item…"
-                                     value={line.item}
-                                     onselect={(s) => onItemSelect(line, s)}
-                                     oncreate={(t) => onItemCreate(line, t)}/>
-                        {#if line.resolving}
-                            <span class="hint">Resolving mapping…</span>
-                        {:else if line.noMapping}
-                            <span class="hint warn">{line.note}
-                                <button class="linkbtn" disabled={line.creatingMapping}
-                                        onclick={() => createMapping(line)}>
-                                    {line.creatingMapping ? "Creating…" : "Create mapping"}</button>
-                            </span>
-                        {:else if line.note}
-                            <span class="hint warn">{line.note}</span>
-                        {/if}
-                    </div>
-                    <div class="qtycell">
-                        <input class="num" type="number" min="0" step="0.001"
-                               bind:value={ line.qty } oninput={() => onQtyOrRate(line)}/>
-                        {#if line.item?.base_unit}<span class="unit">{line.item.base_unit}</span>{/if}
-                    </div>
-                    <input class="num" type="number" min="0" step="0.01"
-                           bind:value={ line.rate } oninput={() => onQtyOrRate(line)}/>
-                    <input class="num" type="number" min="0" step="0.01"
-                           bind:value={ line.amount } oninput={() => onAmount(line)}/>
-                    <button class="del" title="Remove line" onclick={ () => removeLine(line.key) }>✕</button>
-                </div>
-            {/each}
-
-            <button class="addline" onclick={ addLine }>+ Add line</button>
-        </section>
-
-        <footer class="foot">
-            <div class="total">Total <strong>{total.toFixed(2)}</strong></div>
-            <button class="save" disabled={ !canSave } onclick={ save }>
-                {saving ? "Saving…" : (editingId != null ? "Save changes" : "Save purchase")}
-            </button>
-        </footer>
+{#snippet historyPanel()}
+    <div class="sidehead">
+        <span class="muted">Recent purchases</span>
+        <button class="refresh" onclick={loadHistory} disabled={loadingHistory}>{loadingHistory ? "…" : "↻"}</button>
     </div>
+    {#if history.length === 0}
+        <p class="muted">{loadingHistory ? "Loading…" : "No purchases yet."}</p>
+    {:else}
+        <ul class="hlist">
+            {#each history as h (h.id)}
+                <li class:cancelled={h.is_cancelled} class:active={h.id === editingId}>
+                    <button class="hrow" disabled={h.is_cancelled} onclick={() => openForEdit(h)}>
+                        <div class="hline1"><span>#{h.number}</span><span class="htot">{Number(h.total_amount).toFixed(2)}</span></div>
+                        <div class="hline2"><span>{h.party_name}</span><span>{h.date}</span></div>
+                        {#if h.is_cancelled}<span class="badge">cancelled</span>{/if}
+                    </button>
+                </li>
+            {/each}
+        </ul>
+    {/if}
+{/snippet}
 
-    <aside class="side">
-        <div class="sidehead">
-            <h2>History</h2>
-            <button class="refresh" onclick={loadHistory} disabled={loadingHistory}>
-                {loadingHistory ? "…" : "↻"}
-            </button>
+<div class="wrap">
+    {#if editingId != null}
+        <div class="banner edit">Editing — saving will <strong>cancel the original</strong> and replace it.
+            <button class="linkbtn" onclick={resetForm}>Discard</button>
         </div>
-        {#if history.length === 0}
-            <p class="muted">{loadingHistory ? "Loading…" : "No purchases yet."}</p>
-        {:else}
-            <ul class="hlist">
-                {#each history as h (h.id)}
-                    <li class:cancelled={h.is_cancelled} class:active={h.id === editingId}>
-                        <button class="hrow" disabled={h.is_cancelled} onclick={() => openForEdit(h)}>
-                            <div class="hline1">
-                                <span class="hnum">#{h.number}</span>
-                                <span class="htot">{Number(h.total_amount).toFixed(2)}</span>
-                            </div>
-                            <div class="hline2">
-                                <span>{h.party_name}</span>
-                                <span class="hdate">{h.date}</span>
-                            </div>
-                            {#if h.is_cancelled}<span class="badge">cancelled</span>{/if}
-                        </button>
-                    </li>
-                {/each}
-            </ul>
-        {/if}
-    </aside>
+    {/if}
+    {#if saved}
+        <div class="banner ok">Saved purchase <strong>#{saved.number}</strong> · total <strong>{saved.total_amount}</strong>.</div>
+    {/if}
+    {#if error}
+        <div class="banner err">{error}</div>
+    {/if}
+
+    <section class="head">
+        <div class="field">
+            <label for="party">Party</label>
+            <SmartLookup type="PARTY" placeholder="Search or create party…" value={party}
+                         onselect={onPartySelect} oncreate={onPartyCreate}/>
+        </div>
+        <div class="field date">
+            <label for="date">Date</label>
+            <input id="date" type="date" bind:value={date}/>
+        </div>
+    </section>
+
+    <section class="grid">
+        <div class="ghead"><span>Item</span><span>Qty</span><span>Rate</span><span>Amount</span><span></span></div>
+        {#each lines as line (line.key)}
+            <div class="grow">
+                <div class="cell item">
+                    <SmartLookup type="ITEM" placeholder="Search or create item…" value={line.item}
+                                 onselect={(s) => onItemSelect(line, s)} oncreate={(t) => onItemCreate(line, t)}/>
+                    {#if line.resolving}<span class="hint">Resolving mapping…</span>
+                    {:else if line.noMapping}
+                        <span class="hint warn">{line.note}
+                            <button class="linkbtn" disabled={line.creatingMapping} onclick={() => createMapping(line)}>
+                                {line.creatingMapping ? "Creating…" : "Create mapping"}</button></span>
+                    {:else if line.note}<span class="hint warn">{line.note}</span>{/if}
+                </div>
+                <div class="qtycell">
+                    <input class="num" type="number" min="0" step="0.001" bind:value={line.qty} oninput={() => onQtyOrRate(line)}/>
+                    {#if line.item?.base_unit}<span class="unit">{line.item.base_unit}</span>{/if}
+                </div>
+                <input class="num" type="number" min="0" step="0.01" bind:value={line.rate} oninput={() => onQtyOrRate(line)}/>
+                <input class="num" type="number" min="0" step="0.01" bind:value={line.amount} oninput={() => onAmount(line)}/>
+                <button class="del" title="Remove line" onclick={() => removeLine(line.key)}>✕</button>
+            </div>
+        {/each}
+        <button class="addline" onclick={addLine}>+ Add line <kbd>Alt A</kbd></button>
+    </section>
+
+    <footer class="foot">
+        <div class="total">Total <strong>{total.toFixed(2)}</strong></div>
+        <button class="save" disabled={!canSave} onclick={save}>
+            {saving ? "Saving…" : (editingId != null ? "Save changes" : "Save purchase")} <kbd>Ctrl ⏎</kbd>
+        </button>
+    </footer>
 </div>
 
 {#if partyDialog !== null}
-    <PartyCreateDialog initialName={ partyDialog } oncreated={ onPartyCreated }
-                       oncancel={ () => (partyDialog = null) }/>
-{/if}
+    <PartyCreateDialog initialName={partyDialog} oncreated={onPartyCreated} oncancel={() => (partyDialog = null)}/>{/if}
 {#if itemDialog !== null && companyId}
-    <ItemCreateDialog initialName={ itemDialog.text } companyId={ companyId }
-                      oncreated={ onItemCreated } oncancel={ () => (itemDialog = null) }/>
-{/if}
+    <ItemCreateDialog initialName={itemDialog.text} companyId={companyId} oncreated={onItemCreated}
+                      oncancel={() => (itemDialog = null)}/>{/if}
 
 <style>
-    :global(body) {
-        margin: 0;
-    }
-
-    .page {
-        display: grid;
-        grid-template-columns: 1fr 300px;
-        min-height: 100vh;
-        background: #0f1115;
-        color: #e6e8ec;
-        font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-    }
-
     .wrap {
         padding: 20px 28px 40px;
         box-sizing: border-box;
-        min-width: 0;
-    }
-
-    .bar {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        margin-bottom: 20px;
-    }
-
-    .back {
-        background: transparent;
-        border: 1px solid #2a2f3a;
-        color: #c3c8d2;
-        padding: 6px 12px;
-        border-radius: 8px;
-        cursor: pointer;
-        font-size: 13px;
-    }
-
-    .back:hover {
-        border-color: #6ea8ff;
-        color: #6ea8ff;
-    }
-
-    h1 {
-        margin: 0;
-        font-size: 22px;
-    }
-
-    .ctx {
-        margin-left: auto;
-    }
-
-    .chip {
-        padding: 4px 12px;
-        border-radius: 999px;
-        background: #16233b;
-        color: #6ea8ff;
-        font-size: 12px;
-        font-weight: 600;
     }
 
     .banner {
         padding: 10px 14px;
-        border-radius: 8px;
+        border-radius: var(--radius);
         margin-bottom: 16px;
         font-size: 14px;
     }
 
     .banner.ok {
-        background: #13291d;
-        color: #6ee7a8;
-        border: 1px solid #1f5138;
+        background: var(--ok-soft);
+        color: var(--ok);
+        border: 1px solid var(--ok-border);
     }
 
     .banner.err {
-        background: #2a1517;
+        background: var(--danger-soft);
         color: #ff9b9b;
-        border: 1px solid #5a2a2e;
+        border: 1px solid var(--danger-border);
     }
 
     .banner.edit {
@@ -475,8 +346,8 @@
         color: #b9c6ff;
         border: 1px solid #34406b;
         display: flex;
-        align-items: center;
         gap: 10px;
+        align-items: center;
     }
 
     .head {
@@ -499,23 +370,22 @@
 
     label {
         font-size: 12px;
-        color: #9aa0aa;
+        color: var(--text-muted);
     }
 
     input[type="date"] {
         padding: 8px 10px;
-        border-radius: 8px;
-        border: 1px solid #2a2f3a;
-        background: #0f1115;
-        color: #e6e8ec;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-hi);
+        background: var(--bg-app);
+        color: var(--text);
         font-size: 14px;
     }
 
     .grid {
-        border: 1px solid #1f2530;
+        border: 1px solid var(--border);
         border-radius: 10px;
-        overflow: visible;
-        background: #12151c;
+        background: var(--bg-panel);
     }
 
     .ghead, .grow {
@@ -527,9 +397,9 @@
     }
 
     .ghead {
-        color: #9aa0aa;
+        color: var(--text-muted);
         font-size: 12px;
-        border-bottom: 1px solid #1f2530;
+        border-bottom: 1px solid var(--border);
     }
 
     .grow {
@@ -544,34 +414,25 @@
 
     .hint {
         font-size: 11px;
-        color: #9aa0aa;
+        color: var(--text-muted);
         display: flex;
-        align-items: center;
         gap: 6px;
         flex-wrap: wrap;
+        align-items: center;
     }
 
     .hint.warn {
-        color: #ffc15c;
+        color: var(--warn);
     }
 
     .linkbtn {
         background: transparent;
-        border: 1px solid #2f6feb;
-        color: #6ea8ff;
+        border: 1px solid var(--accent);
+        color: var(--accent-text);
         padding: 2px 8px;
         border-radius: 6px;
         cursor: pointer;
         font-size: 11px;
-    }
-
-    .linkbtn:hover:not(:disabled) {
-        background: #16233b;
-    }
-
-    .linkbtn:disabled {
-        opacity: .5;
-        cursor: default;
     }
 
     .qtycell {
@@ -586,16 +447,15 @@
 
     .unit {
         font-size: 12px;
-        color: #9aa0aa;
-        white-space: nowrap;
+        color: var(--text-muted);
     }
 
     .num {
         padding: 8px 10px;
-        border-radius: 8px;
-        border: 1px solid #2a2f3a;
-        background: #0f1115;
-        color: #e6e8ec;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-hi);
+        background: var(--bg-app);
+        color: var(--text);
         font-size: 14px;
         text-align: right;
         box-sizing: border-box;
@@ -608,11 +468,10 @@
         border: none;
         color: #6b7280;
         cursor: pointer;
-        font-size: 14px;
     }
 
     .del:hover {
-        color: #ff6b6b;
+        color: var(--danger);
     }
 
     .addline {
@@ -620,34 +479,34 @@
         padding: 10px;
         background: transparent;
         border: none;
-        color: #6ea8ff;
+        color: var(--accent-text);
         cursor: pointer;
         font-size: 14px;
         text-align: left;
     }
 
     .addline:hover {
-        background: #16233b;
+        background: var(--accent-soft);
     }
 
     .foot {
         display: flex;
-        align-items: center;
         justify-content: flex-end;
         gap: 24px;
+        align-items: center;
         margin-top: 20px;
     }
 
     .total {
         font-size: 15px;
-        color: #c3c8d2;
+        color: var(--text);
     }
 
     .save {
         padding: 10px 20px;
-        border-radius: 8px;
-        border: 1px solid #2f6feb;
-        background: #2f6feb;
+        border-radius: var(--radius);
+        border: 1px solid var(--accent);
+        background: var(--accent);
         color: #fff;
         font-size: 14px;
         cursor: pointer;
@@ -658,39 +517,36 @@
         cursor: default;
     }
 
-    /* History panel */
-    .side {
-        border-left: 1px solid #1f2530;
-        background: #12151c;
-        padding: 18px 14px;
-        overflow: auto;
+    kbd {
+        background: rgba(0, 0, 0, .25);
+        border: 1px solid var(--border-hi);
+        border-radius: 4px;
+        padding: 0 4px;
+        font-size: 11px;
+        margin-left: 6px;
     }
 
+    /* history panel (rendered inside shell ContextPanel) */
     .sidehead {
         display: flex;
-        align-items: center;
         justify-content: space-between;
+        align-items: center;
         margin-bottom: 10px;
     }
 
-    .side h2 {
-        font-size: 15px;
-        margin: 0;
+    .muted {
+        color: var(--text-muted);
+        font-size: 13px;
     }
 
     .refresh {
         background: transparent;
-        border: 1px solid #2a2f3a;
-        color: #9aa0aa;
+        border: 1px solid var(--border-hi);
+        color: var(--text-muted);
         width: 28px;
         height: 28px;
         border-radius: 6px;
         cursor: pointer;
-    }
-
-    .muted {
-        color: #9aa0aa;
-        font-size: 13px;
     }
 
     .hlist {
@@ -706,16 +562,12 @@
         position: relative;
         width: 100%;
         text-align: left;
-        background: #0f1115;
-        border: 1px solid #1f2530;
-        border-radius: 8px;
+        background: var(--bg-app);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
         padding: 8px 10px;
         cursor: pointer;
-        color: #e6e8ec;
-    }
-
-    .hrow:hover:not(:disabled) {
-        border-color: #34406b;
+        color: var(--text);
     }
 
     .hrow:disabled {
@@ -723,7 +575,7 @@
     }
 
     li.active .hrow {
-        border-color: #2f6feb;
+        border-color: var(--accent);
     }
 
     li.cancelled .hrow {
@@ -738,14 +590,14 @@
     }
 
     .htot {
-        color: #6ee7a8;
+        color: var(--ok);
     }
 
     .hline2 {
         display: flex;
         justify-content: space-between;
         font-size: 11px;
-        color: #9aa0aa;
+        color: var(--text-muted);
         margin-top: 2px;
     }
 
@@ -756,7 +608,7 @@
         font-size: 9px;
         text-transform: uppercase;
         color: #ff9b9b;
-        background: #2a1517;
+        background: var(--danger-soft);
         padding: 1px 5px;
         border-radius: 4px;
     }
