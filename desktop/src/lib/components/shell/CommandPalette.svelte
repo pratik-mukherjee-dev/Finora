@@ -7,6 +7,8 @@
 
     let q = $state("");
     let active = $state(0);
+    // Element refs for the rendered result rows, so we can scroll the active one.
+    let items = $state<HTMLLIElement[]>([]);
 
     const all = $derived(modules.filter((m) => !m.minMode || auth.mode === m.minMode));
     const results = $derived(
@@ -20,6 +22,12 @@
             q = "";
             active = 0;
         }
+    });
+
+    // Keep the highlighted row visible when navigating by keyboard.
+    $effect(() => {
+        const el = items[active];
+        if (open && el) el.scrollIntoView({block: "nearest"});
     });
 
     function choose(c: Command) {
@@ -57,7 +65,7 @@
             />
             <ul>
                 {#each results as c, i (c.id)}
-                    <li class:active={i === active} onmousedown={() => choose(c)}>
+                    <li bind:this={items[i]} class:active={i === active} onmousedown={() => choose(c)}>
                         <span class="ico">{c.icon}</span>
                         <span class="lbl">{c.label}</span>
                         <span class="sc">{c.shortcut}</span>
@@ -107,6 +115,7 @@
         padding: 6px;
         max-height: 320px;
         overflow: auto;
+        scroll-behavior: smooth;
     }
 
     li {

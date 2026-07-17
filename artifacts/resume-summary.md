@@ -1,63 +1,152 @@
-# Finora — Session Resume (FY gate fixed; next: Purchase screen)
+# Finora — Session Resume (Desktop shell refactor complete; next: new screens)
+
+## 0. How to work on this project
+- **Source of truth is always the backend code.** Read `backend/apps/*` (urls, views,
+  serializers, services, selectors) before wiring any screen.
+- **Follow the desktop UI design doc in `artifacts/`** (the finalized "Desktop UI
+  Design Principles / Source of Truth" md) for all layout, navigation, shortcut,
+  and token decisions. Use `artifacts/endpoints.md` (API reference & proposals) for
+  the endpoint map — but if it disagrees with backend code, the backend wins.
+- Deliver **full file contents inline** with the file path (not diffs). One layered
+  step at a time. Precise, minimal-token responses. Verify against real repo code.
 
 ## 1. Project snapshot
+- **Finora** — offline-first desktop accounting/billing app. GitLab project id
+  `84506836`, branch `master`.
+- **Shell:** Tauri v2 (Rust) managing portable PostgreSQL + a Nuitka-frozen Django
+  backend sidecar. Random localhost port per launch; `runtime.json` carries DB
+  params; production settings read `FINORA_RUNTIME_CONFIG`.
+- **Backend:** Django + DRF, nine apps under `backend/apps/`
+  (`common, accounts, financialyear, catalogue, parties, stock, vouchers, search,
+  reports`). JWT auth. services/ (write) + selectors/ (read) split, atomic txns.
+- **Frontend:** SvelteKit SPA (`adapter-static`, SSR off, Svelte 5 runes) in
+  `desktop/src/`. Transport = Tauri HTTP plugin. API client `desktop/src/lib/api.ts`;
+  app store `desktop/src/lib/stores/auth.svelte.ts`.
+- **Dev:** `npm run tauri dev` from `desktop\`. Editing backend logic requires
+  rebuilding the exe (`backend/build_backend.bat`) and copying it into
+  `desktop/src-tauri/resources/backend/finora-backend.exe`.
 
-**Finora** is an offline-first desktop accounting/billing app for small businesses. Repo (GitLab): [byte-force/Finora](https://gitlab.com/byte-force/Finora), branch `master`, project id `84352998`.
+## 2. Full backend API surface (verified this project)
+- **accounts:** `auth/{register,login,refresh,logout,me,state}/`, `companies/` (CRUD),
+  `settings/` (+ `switch_multi/`, `segregation/`).
+- **fy:** list/retrieve/create, `{id}/close/`.
+- **catalogue:** `items/` (+ `{id}/add_mapping/`), `categories/`, `mappings/`
+  (filter `?item=&company=`).
+- **parties:** CRUD, `{id}/ledger/`, **`{id}/balance/` (proposed)**. `PartySerializer`
+  already returns `balance`.
+- **stock:** `ledger/` (+ `ledger/adjust/`), `conversions/` (+ `{id}/cancel/`).
+- **vouchers:** `sales/` (+cancel), `sales-derived/` (`?master=`), `purchases/`
+  (+cancel), `received/` & `payments/` (+ `{id}/allocations/`, +cancel),
+  `number-seqs/`. **Proposed:** `{payments|received}/open_bills/?party=`.
+- **search:** `suggest/?type=&q=`, `record/`.
+- **reports:** `sales/`, `purchases/`, `stock/`, `daily-sheet/`,
+  **`dashboard/` (proposed)**.
+- **Sale line contract quirk:** Sale lines send `item` id + optional `company`
+  (server resolves mapping). **Purchase lines send `mapping` id.** Do not confuse.
 
-- **Shell:** Tauri v2 (Rust), app id `com.byteforce.finora`. Sidecar-manages a portable PostgreSQL 18.4 and a Django backend frozen to a Windows exe via Nuitka.
-- **Backend:** Django + DRF, nine apps under `backend/apps/` (`common, accounts, financialyear, catalogue, parties, stock, vouchers, search, reports`). Auth is **JWT** (`rest_framework_simplejwt`); access-token lifetime 12h. Services/selectors split (write vs read), atomic transactions.
-- **Frontend:** SvelteKit SPA (`adapter-static`, SSR off, Svelte 5 runes) in `desktop/src/`. Transport is the **Tauri HTTP plugin** (Rust-side fetch, avoids CORS). API client at `desktop/src/lib/api.ts`; app store at `desktop/src/lib/stores/auth.svelte.ts`.
-- **Dev workflow:** `npm run tauri dev` from `desktop\`. Windows, PyCharm, project root `E:\PyCharm\Services\Finora\`, user profile `death`.
-- **Working style:** deliver full file contents inline (not diffs) with the file path; one layered build-order step at a time; precise, minimal-token responses; double-check against actual repo code before proposing changes.
+## 3. Backend contracts DRAFTED but NOT yet applied to repo
+Provided as full file contents in an earlier turn; still need to be committed +
+exe rebuilt before the desktop can call them:
+- `vouchers/selectors/bills.py` — shared `_open_bills`, **excludes cancelled bills**
+  (also a correctness fix), adds `open_bills_preview(party, kind)`.
+- `vouchers/selectors/__init__.py` — export `open_bills_preview`.
+- `vouchers/views.py` — `open_bills` action on Received + Payment (`detail=False`).
+- `parties/views.py` — `balance` action.
+- `reports/selectors.py` + `reports/views.py` + `reports/urls.py` — `dashboard/`.
+> ⚠️ These are pending. The refactored Settle screen already calls
+> `open_bills/`; it will 404 until the backend change is built into the exe.
 
-## 2. Architecture facts worth remembering
+## 4. What is built & verified (pre-existing)
+- Tauri shell + sidecar wiring + `api.ts` (JWT, port discovery, `waitForBackend`).
+- Auth flow (register/login/logout), company setup, **FY gate** working end-to-end.
+- SmartLookup + PartyCreateDialog + ItemCreateDialog components.
+- Voucher screens Purchase, Sale, Settle (Payment/Received) — functionally complete
+  against the backend (pre-refactor versions).
 
-- **DB binding:** Tauri `backend.rs` picks a random `pg_port` per launch, keeps `pgdata` in `%APPDATA%\com.byteforce.finora\pgdata`, writes `runtime.json` (app-data copy) with the sidecar's DB params, and injects `FINORA_RUNTIME_CONFIG` into the frozen Django. `production.py` reads that file for `DATABASES`. A plain `manage.py shell` (no `FINORA_RUNTIME_CONFIG`) hits base.py's **5432 defaults — a DIFFERENT DB**, which caused a lot of false "empty table" confusion earlier. Always inspect the sidecar DB, not 5432.
-- **FY list endpoint** returns a **bare array** (DRF pagination is commented out in `config/settings/base.py`). Serializer fields: `id, start_date, end_date, is_active, is_closed, is_writable`.
-- **Every voucher/stock endpoint requires an active FY** (`vouchers/views.py::_context` → `financialyear.selectors.active_fy`, raises `FinancialYearLocked` if none). Model enforces one active FY per user via a partial `UniqueConstraint` and a `CheckConstraint(end_date > start_date)`.
-- **Boot routing cascade** (`desktop/src/routes/+page.svelte`): `waitForBackend` → `authState` (first-run → `/register`) → `auth.restore()` → `if !isAuthed /login` → `if needsSetup /setup` → `if needsFy /fy` → else `/app`.
+## 5. What THIS session did — desktop-native shell refactor
+Moved the app from browser-style (per-page chrome, back buttons, route nav) to a
+**persistent desktop shell** per the design doc. New/changed files (all delivered
+inline as full contents this session):
 
-## 3. What is built and verified
+**Foundation (new):**
+- `desktop/src/lib/theme.css` — design tokens (surfaces, text, accent/state,
+  metrics, focus ring). Single source for color/metrics.
+- `desktop/src/lib/commands.ts` — single command/module registry (Alt+1..9),
+  `activeModuleId(pathname)`.
+- `desktop/src/lib/shortcuts.ts` — `keychordOf(e)`, `inEditable(target)`.
+- `desktop/src/lib/shell/shellContext.svelte.ts` — **teleport/context API**:
+  `createShellState()`, `setShell/useShell`, screens register
+  `{title, actions, panel[], shortcuts[]}`; supports tabbed panel + `activeTab`.
+- `desktop/src/lib/shell/useScreen.svelte.ts` — `registerScreen(build)` helper
+  (auto-dispose on unmount).
 
-- Tauri shell + Postgres/Django sidecar wiring + `api.ts` (JWT access/refresh, port discovery via `get_django_port`, `waitForBackend`).
-- Auth flow: register (first-run only) → login → logout; refresh token persisted in Tauri `plugin-store` (`session.json`, key `refresh`).
-- Company setup flow: mode select (single/multi) → create company → routes to `/fy`.
-- **FY gate fully working** (this session's outcome): `/fy` creates the initial active FY, `/app` shell renders and sticks. Verified end-to-end even after wiping `pgdata` + `session.json` + `runtime.json` (clean first-run walks register → mode → company → FY → app).
-- **SmartLookup + PartyCreateDialog + ItemCreateDialog** exist and are complete under `desktop/src/lib/components/`, but are **not yet consumed by any screen**. They call `/api/search/suggest/`, `/api/search/record/`, `/api/parties/`, `/api/catalogue/items/`, `/api/catalogue/mappings/`.
+**Shell components (new):**
+- `components/shell/ActivityBar.svelte` — module rail, active state, collapse,
+  shortcut hints, mode filtering.
+- `components/shell/ContextBar.svelte` — screen title + quick-action buttons
+  (each shows its shortcut) + palette trigger.
+- `components/shell/ContextPanel.svelte` — **shell-hosted tabbed right dock**;
+  renders the active screen's panel tab snippet.
+- `components/shell/CommandPalette.svelte` — `Ctrl+K` fuzzy module jump.
 
-## 4. What THIS session fixed (the FY gate saga)
+**Shell host (new/replaced):**
+- `routes/app/+layout.svelte` — persistent shell: ActivityBar + topbar
+  (company picker, FY badge, logout) + ContextBar + workspace + ContextPanel +
+  status bar. Owns the global key listener: `Ctrl+K` palette, `Ctrl+H` toggle
+  panel, `Ctrl+,` settings, `Alt+1..9` modules, and dispatches screen-registered
+  contextual shortcuts (modified chords fire even inside inputs).
+- `routes/app/+page.svelte` — trimmed to a lean **Home** workspace (chrome removed;
+  now lives in the layout). Placeholder for dashboard KPIs.
 
-The user was stuck on the FY setup screen; "Start Bookkeeping" appeared to error on the second click. After ruling out (via evidence) several red herrings — token rotation, DB port mismatch, stale exe — the **actual root cause** was found:
+**Screens refactored to the shell (full files delivered):**
+- `routes/app/purchase/+page.svelte` — no page chrome/back button; tokens; History
+  moved into a shell **panel tab**; actions/shortcuts (`Ctrl+N`, `Alt+A`,
+  `Ctrl+Enter`) registered.
+- `routes/app/sale/+page.svelte` — same, with **two panel tabs: History + Derived**
+  (read-only company-sales moved out of the workspace into the Derived tab);
+  history "▣" jumps to Derived tab.
+- `routes/app/settle/+page.svelte` — **two panel tabs: History + Allocation**.
+  Allocation tab shows a **live open-bills preview** (calls proposed
+  `open_bills/`) with a client-side "will settle" plan as the amount is typed;
+  after save it shows the actual allocation; picking a history row loads
+  `{id}/allocations/`.
 
-- **`desktop/src/routes/app/+page.svelte` had been overwritten with a duplicate copy of the FY setup page.** Its `onMount` guard did `if (!auth.needsFy) goto("/app")` — a redirect to itself. So after FY creation, navigating to `/app` just re-rendered the FY form; the re-POST hit the backend's `open_first_fy` guard and returned 400 "An active financial year already exists."
-- The FY was in fact being created correctly on the first attempt (confirmed via a devtools console log of the `ensureFy` POST body + refetch showing `is_active:true`).
+**Design decisions locked this session:**
+- Not two "modes" — mouse + keyboard are always-on paths to the same commands;
+  the shortcut is shown on its mouse target. No input-mode toggle. Preferences
+  (rail density, hint visibility) instead of modes.
+- **Context panel is fully shell-hoisted** via the context API (chosen over
+  in-screen panels) for clean separation; screens only declare panel tab snippets.
+- **Pre-auth screens stay full-page** (boot `routes/+page.svelte`, login, register,
+  setup, fy) — they render before the shell exists; only theme tokens apply.
 
-**Fix applied:** replaced `desktop/src/routes/app/+page.svelte` with a real app shell (nav rail with Home/Purchase/Sale/Payment/Stock/Reports sections, company switcher in multi mode, FY badge, logout, and a route guard that bounces to `/login`/`/setup`/`/fy` when prerequisites are missing — never to itself). The `/fy` page's `ensureFy` (idempotent: POST, and on conflict refetch + adopt the active FY) works as intended.
+## 6. Exact next steps (in order)
+1. **Apply the pending backend contracts (§3)** and rebuild the exe, so
+   `open_bills/`, `parties/{id}/balance/`, `reports/dashboard/` exist. Settle's
+   Allocation preview depends on `open_bills/`.
+2. **Build the new v1 screens** (all inside the shell, register title/actions/
+   panel/shortcuts; use tokens; no back buttons). Per design doc module order:
+   - **Home dashboard** (`reports/dashboard/`) — replace the placeholder.
+   - **Stock** (`Alt+5`) — tabs Ledger · Adjust · Convert
+     (`stock/ledger/`, `ledger/adjust/`, `conversions/` + cancel).
+   - **Parties** (`Alt+6`) — list + ledger drill-down + balance
+     (`parties/`, `{id}/ledger/`, `{id}/balance/`).
+   - **Items** (`Alt+7`) — items + per-company mappings + categories
+     (`catalogue/items/`, `mappings/`, `categories/`, `items/{id}/add_mapping/`).
+   - **Reports** (`Alt+8`) — filter panel + grid + totals + export; daily-sheet tab
+     (`reports/*`).
+   - **Settings** (`Alt+9`) — numbering (`number-seqs/`), FY close
+     (`fy/{id}/close/`), mode/segregation, Preferences (rail density, hints).
+3. **Optional polish:** `ShortcutCheatSheet.svelte` (`F1`) reading `commands.ts`;
+   `Ctrl+P` quick-open record; DataGrid shared component for lists/reports.
 
-Supporting hardening also discussed/applied during the session (verify these are actually in the tree before relying on them): `loadContext` tolerating a `{results:[]}` shape; `restore()` only clearing the session on genuine auth failure and persisting refreshed tokens; `ApiError` flattening DRF field errors into a readable message; `request()` forcing `Content-Type: application/json` when a body is present. `SIMPLE_JWT.ROTATE_REFRESH_TOKENS` was recommended to be `False` (single-user app, no `token_blacklist` app installed) — confirm the running exe reflects the intended setting.
-
-## 5. Exact next step — build the Purchase screen (build-order step 4)
-
-First voucher screen and first consumer of the existing SmartLookup + dialogs. Confirmed backend contract:
-
-- Endpoint: `POST /api/vouchers/purchases/` with body:
-  ```json
-  { "company": <id>, "party": <id>, "date": "YYYY-MM-DD",
-    "number": null,
-    "lines": [ { "mapping": <mappingId>, "qty": <n>, "rate": <n> } ] }
-  ```
-- **Critical:** purchase lines take a `mapping` id (`ItemCompanyMapping`), **not** an item id. The item `suggest` endpoint returns only `{ id, name, base_unit }`. After the user picks an item via SmartLookup, resolve to a per-company mapping via `GET /api/catalogue/mappings/?item=<itemId>&company=<currentCompanyId>` (returns `{ id, item, rate, stock, ... }`) to get the `mapping` id and default `rate`. If no mapping exists for the current company, open `ItemCreateDialog` (creates item + mapping for the current company).
-- Use `auth.currentCompany.id` for `company`; rely on the server's active FY for `fy` (resolved server-side in `_context`). `number` can be `null` (server auto-numbers via `VoucherNumberSeq`, high-water template).
-- Response (`PurchaseSerializer`): `{ id, company, party, number, date, total_amount, is_cancelled, lines: [{ id, item, item_name, mapping, qty, rate, amount }] }`. Show server-computed `number` and `total_amount` after save.
-- Party picked via SmartLookup(type="PARTY") → `PartyCreateDialog` on no-match → `POST /api/parties/`.
-- Slot the screen into the `app/+page.svelte` "purchase" section (currently a placeholder), or a `routes/app/purchase` route — match the chosen nav pattern. `PurchaseViewSet` also has a `cancel` action (soft-cancel + reversing entries) for later.
-
-**Before coding Purchase, verify against the repo:** `backend/apps/vouchers/` (`views.py`, `serializers.py`, `urls.py`, `models.py`) to confirm the exact purchase payload/response and the `_context` FY resolution, and `backend/apps/catalogue/` mappings endpoint filters (`?item=&company=`). Read `desktop/src/lib/components/SmartLookup*.svelte`, `ItemCreateDialog`, `PartyCreateDialog` for their prop/event contracts.
-
-## 6. Known caveats / non-blocking
-
-- `SECRET_KEY` is the 22-char dev default → `InsecureKeyLengthWarning` on JWT signing. Set a 32+ byte `SECRET_KEY` in `backend/.env` before shipping.
-- `WARNING: Unauthorized: /api/accounts/auth/me/` on boot is expected/harmless: `restore()` probes `/me/` with an empty access token, catches 401, refreshes, retries.
-- Orphaned sidecars: if the app is hard-killed, `finora-backend.exe`/`postgres.exe` can linger and lock the exe. `taskkill /F /IM finora-backend.exe /T` (+ `postgres.exe`) to clear. Consider hardening `backend.rs` to reap stale sidecars on startup and ensure `stop()` runs on window close/exit.
-- Editing backend logic (DB binding, settings, services) requires **rebuilding the Nuitka exe** (`backend/build_backend.bat`) and copying it into `desktop/src-tauri/resources/backend/finora-backend.exe`; a running exe file-locks the target during copy.
-- Don't run `manage.py shell` for ground-truth without pointing it at the sidecar's `runtime.json` — it defaults to 5432, a different DB.
+## 7. Known caveats / non-blocking
+- Refactored screens still have their own `onMount` auth-gate redirect; the layout
+  also gates. Harmless double-guard; can centralize later.
+- `open_bills/` live preview will 404 until §3 backend is built — expected.
+- `low_stock_count` in proposed dashboard uses `stock <= 0`; threshold is a v2
+  setting.
+- Set a 32+ byte `SECRET_KEY` in `backend/.env` before shipping (JWT warning).
+- Orphaned sidecars on hard-kill can lock the exe: `taskkill /F /IM
+  finora-backend.exe /T` (+ `postgres.exe`).
+- `ROTATE_REFRESH_TOKENS` recommended `False` (single-user, no blacklist app).
