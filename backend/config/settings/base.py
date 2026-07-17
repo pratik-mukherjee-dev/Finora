@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     'apps.vouchers',
     'apps.search',
     'apps.reports',
+    'apps.ledgers',
 ]
 
 MIDDLEWARE = [

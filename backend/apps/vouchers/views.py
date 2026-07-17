@@ -79,6 +79,7 @@ class SaleMasterViewSet(
             request.user, company, fy, party, request.data["date"],
             request.data["lines"], number=request.data.get("number"),
             segregate_flag=request.data.get("segregate"),
+            charges=request.data.get("charges", []),
         )
         return Response(self.get_serializer(master).data, status=201)
 
@@ -115,6 +116,7 @@ class PurchaseViewSet(
         p = services.create_purchase(
             request.user, company, fy, party, request.data["date"],
             request.data["lines"], number=request.data.get("number"),
+            charges=request.data.get("charges", []),
         )
         return Response(self.get_serializer(p).data, status=201)
 

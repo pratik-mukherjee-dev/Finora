@@ -8,10 +8,11 @@ from apps.stock.services import post_movement
 from apps.parties.services import post_entry
 from ..models import Purchase, PurchaseLine
 from .numbering import next_number
+from .charges import apply_charges, persist_charges
 
 
 @transaction.atomic
-def create_purchase(user, company, fy, party, date, lines, number=None):
+def create_purchase(user, company, fy, party, date, lines, number=None, charges=None):
     if not fy.is_writable:
         raise DomainError("Financial year is not writable.")
     num = next_number(company, fy, "PURCHASE", manual=number)
@@ -36,7 +37,12 @@ def create_purchase(user, company, fy, party, date, lines, number=None):
             update_rate(mapping.id, rate)
         post_movement(mapping.id, date, fy, qty_in=qty,
                       voucher_type="PURCHASE", voucher_id=purchase.id)
-    purchase.total_amount = total
+
+    final_total, resolved_charges = apply_charges(total, charges or [])
+    if resolved_charges:
+        persist_charges("PURCHASE", purchase.id, resolved_charges)
+
+    purchase.total_amount = final_total
     purchase.save(update_fields=["total_amount"])
-    post_entry(party, date, fy, "PURCHASE", purchase.id, credit=total)
+    post_entry(party, date, fy, "PURCHASE", purchase.id, credit=final_total)
     return purchase

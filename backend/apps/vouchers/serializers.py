@@ -2,8 +2,21 @@ from rest_framework import serializers
 
 from .models import (
     SaleMaster, SaleDerived, SaleLine, Purchase, PurchaseLine,
-    Received, Payment, Allocation, VoucherNumberSeq,
+    Received, Payment, Allocation, VoucherNumberSeq, VoucherCharge,
 )
+
+
+class VoucherChargeSerializer(serializers.ModelSerializer):
+    ledger_name = serializers.CharField(source="ledger.name", read_only=True)
+
+    class Meta:
+        model = VoucherCharge
+        fields = [
+            "id", "ledger", "ledger_name", "charge_type", "mode",
+            "input_value", "amount", "sort_order",
+        ]
+        read_only_fields = ["amount", "sort_order"]
+
 
 
 class SaleLineSerializer(serializers.ModelSerializer):
@@ -21,27 +34,42 @@ class SaleLineSerializer(serializers.ModelSerializer):
 
 class SaleDerivedSerializer(serializers.ModelSerializer):
     lines = SaleLineSerializer(many=True, read_only=True)
+    charges = serializers.SerializerMethodField()
 
     class Meta:
         model = SaleDerived
         fields = [
             "id", "company", "number", "date", "total_amount",
-            "master", "is_cancelled", "lines",
+            "master", "is_cancelled", "lines", "charges",
         ]
         read_only_fields = fields
+
+    def get_charges(self, obj):
+        from .models import VoucherCharge
+        qs = VoucherCharge.objects.filter(voucher_type="SALE_DERIVED", voucher_id=obj.id)
+        return VoucherChargeSerializer(qs, many=True).data
+
 
 
 class SaleMasterSerializer(serializers.ModelSerializer):
     lines = SaleLineSerializer(many=True, read_only=True)
     derived = SaleDerivedSerializer(many=True, read_only=True)
+    charges = serializers.SerializerMethodField()
 
     class Meta:
         model = SaleMaster
         fields = [
             "id", "company", "party", "number", "date", "segregate",
-            "total_amount", "is_cancelled", "lines", "derived",
+            "total_amount", "is_cancelled", "lines", "derived", "charges",
         ]
-        read_only_fields = ["number", "total_amount", "is_cancelled", "lines", "derived"]
+        read_only_fields = ["number", "total_amount", "is_cancelled",
+                            "lines", "derived", "charges"]
+
+    def get_charges(self, obj):
+        from .models import VoucherCharge
+        qs = VoucherCharge.objects.filter(voucher_type="SALE", voucher_id=obj.id, is_cancelled=False)
+        return VoucherChargeSerializer(qs, many=True).data
+
 
 
 class PurchaseLineSerializer(serializers.ModelSerializer):
@@ -56,14 +84,21 @@ class PurchaseLineSerializer(serializers.ModelSerializer):
 class PurchaseSerializer(serializers.ModelSerializer):
     lines = PurchaseLineSerializer(many=True, read_only=True)
     party_name = serializers.CharField(source="party.name", read_only=True)
+    charges = serializers.SerializerMethodField()
 
     class Meta:
         model = Purchase
         fields = [
             "id", "company", "party", "party_name", "number", "date",
-            "total_amount", "is_cancelled", "lines",
+            "total_amount", "is_cancelled", "lines", "charges",
         ]
-        read_only_fields = ["number", "total_amount", "is_cancelled", "lines"]
+        read_only_fields = ["number", "total_amount", "is_cancelled",
+                            "lines", "charges"]
+
+    def get_charges(self, obj):
+        from .models import VoucherCharge
+        qs = VoucherCharge.objects.filter(voucher_type="PURCHASE", voucher_id=obj.id, is_cancelled=False)
+        return VoucherChargeSerializer(qs, many=True).data
 
 
 class ReceivedSerializer(serializers.ModelSerializer):
