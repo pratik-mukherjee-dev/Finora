@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { enterFlow } from "$lib/flow";
+    import {enterFlow} from "$lib/flow";
     import {auth} from "$lib/stores/auth.svelte";
     import {goto} from "$app/navigation";
     import {onMount} from "svelte";
@@ -8,6 +8,7 @@
     import PartyCreateDialog from "$lib/components/PartyCreateDialog.svelte";
     import ItemCreateDialog from "$lib/components/ItemCreateDialog.svelte";
     import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+    import LedgerLookup from "$lib/components/LedgerLookup.svelte";
     import {registerScreen} from "$lib/shell/useScreen.svelte";
 
     onMount(() => {
@@ -16,6 +17,7 @@
         if (auth.needsFy) return void goto("/fy");
         void loadHistory();
         void loadLedgers();
+        if (charges.length === 0) charges = [newCharge()];   // default row for the enter-flow
         focusParty();
     });
 
@@ -92,7 +94,7 @@
     const round2 = (n: number) => (Math.round(n * 100) / 100).toFixed(2);
 
     // Charge ledgers we render in v1: discount + round-off only (TAX/OTHER = v2).
-    const chargeLedgers = $derived(ledgers.filter((l) => l.kind === "DISCOUNT" || l.kind === "ROUND_OFF"));
+    const chargeLedgers = $derived(ledgers);
     const ledgerById = $derived(new Map(ledgers.map((l) => [l.id, l])));
 
     function kindOf(row: ChargeRow): Ledger["kind"] | null {
@@ -189,7 +191,7 @@
         date = today;
         segregate = false;
         lines = [newLine()];
-        charges = [];
+        charges = [newCharge()];
         error = null;
         saved = null;
         focusParty();
@@ -255,9 +257,37 @@
         lines = [...lines, newLine()];
     }
 
+    // Enter on the last line's amount: add a new line and focus it (keeps Alt+A too).
+    function onLineEnter(e: KeyboardEvent, line: Line) {
+        if (e.key !== "Enter" || e.ctrlKey || e.metaKey) return;
+        const isLast = lines[lines.length - 1]?.key === line.key;
+        if (!isLast) return;               // not last -> let normal flow advance
+        e.preventDefault();
+        e.stopPropagation();
+        addLine();
+        const created = lines[lines.length - 1];
+        setTimeout(() => {
+            const rows = Array.from(document.querySelectorAll<HTMLElement>(".grow"));
+            const idx = lines.findIndex((l) => l.key === created.key);
+            rows[idx]?.querySelector<HTMLInputElement>('[data-flow="item"]')?.focus();
+        }, 0);
+    }
+
     function removeLine(key: number) {
         lines = lines.length > 1 ? lines.filter((l) => l.key !== key) : lines;
     }
+
+    // Enter on an empty item field of the last, blank line: drop it and advance.
+    function onLineEmptyEnter(line: Line) {
+        const isLast = lines[lines.length - 1]?.key === line.key;
+        const blank = !line.item && (line.qty === "" || Number(line.qty) === 0 || line.qty === "1") && Number(line.amount) === 0;
+        if (isLast && lines.length > 1 && blank) {
+            removeLine(line.key);
+        }
+        // Move focus to the first charge row's picker (next flow step).
+        setTimeout(() => document.querySelector<HTMLElement>('[data-flow="charge"]')?.focus(), 0);
+    }
+
 
     // ── charge row management ─────────────────────────────────────────────────
     function addCharge() {
@@ -271,9 +301,51 @@
         }, 0);
     }
 
+    // Enter on the last charge's value: chain a new charge (keeps Alt+I too).
+    function onChargeEnter(e: KeyboardEvent, charge: ChargeRow) {
+        if (e.key !== "Enter" || e.ctrlKey || e.metaKey) return;
+        const isLast = charges[charges.length - 1]?.key === charge.key;
+        if (!isLast) return;                 // not last -> normal flow advances
+        e.preventDefault();
+        e.stopPropagation();
+        addCharge();                         // adds row + focuses new picker (via addCharge's setTimeout)
+    }
+
+    // Enter after picking a ledger. For ROUND_OFF (no value field) chain/advance;
+    // for DISCOUNT, move focus into its value input instead.
+    function onChargePicked(charge: ChargeRow) {
+        const kind = kindOf(charge);
+        if (kind === "DISCOUNT") {
+            // Focus this row's value input to continue the flow.
+            setTimeout(() => {
+                const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-flow="charge"]'));
+                const idx = charges.findIndex((c) => c.key === charge.key);
+                const row = rows[idx]?.closest(".chrow");
+                row?.querySelector<HTMLInputElement>('[data-flow="charge-val"]')?.focus();
+            }, 0);
+            return;
+        }
+        // ROUND_OFF (or any no-input kind): chain if last, else go to Save.
+        const isLast = charges[charges.length - 1]?.key === charge.key;
+        if (isLast) addCharge();
+        else setTimeout(() => document.querySelector<HTMLElement>('[data-flow="save"]')?.focus(), 0);
+    }
+
+
     function removeCharge(key: number) {
         charges = charges.filter((c) => c.key !== key);
     }
+
+    // Enter on an empty charge picker of the last, blank charge: drop it and advance to Save.
+    function onChargeEmptyEnter(charge: ChargeRow) {
+        const isLast = charges[charges.length - 1]?.key === charge.key;
+        if (isLast && charge.ledgerId == null) {
+            if (charges.length > 1) removeCharge(charge.key);
+            else charges = [];   // collapse the lone default row so flow reaches Save
+        }
+        setTimeout(() => document.querySelector<HTMLElement>('[data-flow="save"]')?.focus(), 0);
+    }
+
 
     function focusCharges() {
         if (charges.length === 0) addCharge();
@@ -300,9 +372,15 @@
     }
 
     const flowOpts = $derived({
-        onSave: () => { void save(); },
+        // Ctrl+Enter on a complete form: save directly, no dialog.
+        onSave: (_opts: { direct: boolean }) => {
+            if (canSave) void save();
+        },
         isComplete,
-        onConfirm: () => { if (canSave) confirmOpen = true; },
+        // Plain Enter at the end always opens the confirm dialog.
+        onConfirm: () => {
+            confirmOpen = true;
+        },
     });
 
     // ── save via confirmation ─────────────────────────────────────────────────
@@ -315,6 +393,12 @@
         confirmOpen = false;
         await save();
     }
+
+    function closeConfirm() {
+        confirmOpen = false;
+        focusParty();          // return focus into the flow so shortcuts keep working
+    }
+
 
     // Build the backend charge payload from the dynamic rows, driven by ledger kind.
     function buildPayloadCharges() {
@@ -414,7 +498,8 @@
                 <li class:cancelled={h.is_cancelled} class:active={h.id === editingId}>
                     <div class="hrow">
                         <button class="hmain" disabled={h.is_cancelled} onclick={() => openForEdit(h)}>
-                            <div class="hline1"><span>#{h.number}</span><span class="htot">{Number(h.total_amount).toFixed(2)}</span></div>
+                            <div class="hline1"><span>#{h.number}</span><span
+                                    class="htot">{Number(h.total_amount).toFixed(2)}</span></div>
                             <div class="hline2"><span>{h.party_name}</span><span>{h.date}</span></div>
                         </button>
                         <button class="viewbtn" title="View derived" onclick={() => viewDerived(h)}>▣</button>
@@ -430,13 +515,15 @@
     {#if !saved}
         <p class="muted">Save a sale or pick one from History to see its company-sales.</p>
     {:else}
-        <div class="sidehead"><span class="muted">Master #{saved.number} · {Number(saved.total_amount).toFixed(2)}</span></div>
+        <div class="sidehead"><span class="muted">Master #{saved.number}
+            · {Number(saved.total_amount).toFixed(2)}</span></div>
         {#if saved.derived.length === 0}
             <p class="muted">No derived sales.</p>
         {:else}
             {#each saved.derived as d (d.id)}
                 <div class="derived">
-                    <div class="dhead"><span>#{d.number}</span><span class="dtot">{Number(d.total_amount).toFixed(2)}</span></div>
+                    <div class="dhead"><span>#{d.number}</span><span
+                            class="dtot">{Number(d.total_amount).toFixed(2)}</span></div>
                     <div class="dlines">
                         {#each d.lines as dl (dl.id)}
                             <div class="dline"><span>{dl.item_name}</span>
@@ -486,8 +573,13 @@
         {#each lines as line (line.key)}
             <div class="grow">
                 <div class="cell item">
-                    <SmartLookup type="ITEM" flow="item" placeholder="Search or create item…" value={line.item}
-                                 onselect={(s) => onItemSelect(line, s)} oncreate={(t) => onItemCreate(line, t)}/>
+                    <SmartLookup type="ITEM" flow="item"
+                                 placeholder="Search or create item ..."
+                                 value={line.item}
+                                 onselect={(s) => onItemSelect(line, s)}
+                                 oncreate={(t) => onItemCreate(line, t)}
+                                 onemptyenter={() => onLineEmptyEnter(line)}
+                    />
                     {#if line.resolving}<span class="hint">Resolving rate…</span>
                     {:else if line.note}<span class="hint warn">{line.note}</span>{/if}
                 </div>
@@ -499,7 +591,7 @@
                 <input class="num" type="number" min="0" step="0.01" data-flow="rate"
                        bind:value={line.rate} oninput={() => onQtyOrRate(line)}/>
                 <input class="num" type="number" min="0" step="0.01" data-flow="amount"
-                       bind:value={line.amount} oninput={() => onAmount(line)}/>
+                       bind:value={line.amount} oninput={() => onAmount(line)} onkeydown={(e) => onLineEnter(e, line)}/>
                 <button class="del" title="Remove line" onclick={() => removeLine(line.key)}>✕</button>
             </div>
         {/each}
@@ -511,23 +603,26 @@
         {#each charges as c (c.key)}
             {@const kind = kindOf(c)}
             <div class="chrow">
-                <select class="chsel" data-flow="charge" bind:value={c.ledgerId}>
-                    <option value={null} disabled>Select charge…</option>
-                    {#each chargeLedgers as l (l.id)}
-                        <option value={l.id}>{l.name}</option>
-                    {/each}
-                </select>
+                <LedgerLookup flow="charge"
+                              options={chargeLedgers}
+                              value={c.ledgerId}
+                              onselect={(id) => (c.ledgerId = id)}/>
+
 
                 {#if kind === "DISCOUNT"}
                     <div class="chmode">
                         <button type="button" class:active={c.mode === "PERCENT"}
-                                onclick={() => (c.mode = "PERCENT")}>%</button>
+                                onclick={() => (c.mode = "PERCENT")}>%
+                        </button>
                         <button type="button" class:active={c.mode === "AMOUNT"}
-                                onclick={() => (c.mode = "AMOUNT")}>₹</button>
+                                onclick={() => (c.mode = "AMOUNT")}>₹
+                        </button>
                     </div>
                     <input class="num" type="number" min="0" step="0.01" data-flow="charge-val"
                            bind:value={c.value}
-                           placeholder={c.mode === "PERCENT" ? "0 %" : "0.00"}/>
+                           placeholder={c.mode === "PERCENT" ? "0 %" : "0.00"}
+                           onkeydown={(e) => onChargeEnter(e, c)}
+                    />
                 {:else if kind === "ROUND_OFF"}
                     <span class="chspan">auto</span>
                     <span class="chhint">server computes the delta</span>
@@ -555,7 +650,7 @@
     </section>
 
     <footer class="foot">
-        <button class="save" data-flow="save" disabled={!canSave} onclick={requestSave}>
+        <button class="save" type="button" data-flow="save" disabled={!canSave} onclick={requestSave}>
             {saving ? "Saving…" : (editingId != null ? "Save changes" : "Save sale")} <kbd>Ctrl ⏎</kbd>
         </button>
     </footer>
@@ -563,18 +658,21 @@
 
 
 {#if partyDialog !== null}
-    <PartyCreateDialog initialName={partyDialog} oncreated={onPartyCreated} oncancel={() => (partyDialog = null)}/>{/if}
+    <PartyCreateDialog initialName={partyDialog} oncreated={onPartyCreated} oncancel={() => (partyDialog = null)}/>
+{/if}
 {#if itemDialog !== null && companyId}
     <ItemCreateDialog initialName={itemDialog.text} companyId={companyId} oncreated={onItemCreated}
-                      oncancel={() => (itemDialog = null)}/>{/if}
+                      oncancel={() => (itemDialog = null)}/>
+{/if}
 {#if confirmOpen}
     <ConfirmDialog
-        title={editingId != null ? "Replace this sale?" : "Confirm sale"}
-        message={`Party: ${party?.name ?? "—"} · Final bill ${finalBill.toFixed(2)}. ${editingId != null ? "The original will be cancelled and replaced." : "Post this voucher?"}`}
-        confirmLabel={editingId != null ? "Replace" : "Post sale"}
-        busy={saving}
-        onconfirm={confirmSave}
-        oncancel={() => (confirmOpen = false)}/>{/if}
+            title={editingId != null ? "Replace this sale?" : "Confirm sale"}
+            message={`Party: ${party?.name ?? "—"} · Final bill ${finalBill.toFixed(2)}. ${editingId != null ? "The original will be cancelled and replaced." : "Post this voucher?"}`}
+            confirmLabel={editingId != null ? "Replace" : "Post sale"}
+            busy={saving}
+            onconfirm={confirmSave}
+            oncancel={closeConfirm}/>
+{/if}
 
 <style>
     .wrap {

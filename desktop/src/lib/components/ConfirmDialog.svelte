@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { onMount } from "svelte";
+
     type Props = {
         title?: string;
         message?: string;
@@ -18,7 +20,14 @@
         oncancel,
     }: Props = $props();
 
-    // Auto-focus the confirm button so a second Enter posts immediately.
+        let armed = $state(false);
+
+    // Ignore the Enter keystroke that opened this dialog; arm on the next tick.
+    onMount(() => {
+        const id = setTimeout(() => (armed = true), 0);
+        return () => clearTimeout(id);
+    });
+
     function focusOnMount(node: HTMLElement) {
         node.focus();
     }
@@ -32,11 +41,13 @@
             e.preventDefault();
             oncancel();
         } else if (e.key === "Enter") {
-            // Enter anywhere in the dialog confirms (flow-oriented).
+            if (!armed) return;            // swallow the opening keystroke
             e.preventDefault();
+            e.stopPropagation();
             if (!busy) onconfirm();
         }
     }
+
 </script>
 
 <svelte:window onkeydown={onKey}/>

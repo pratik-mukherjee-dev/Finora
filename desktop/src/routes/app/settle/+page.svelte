@@ -70,10 +70,19 @@
         await save();
     }
 
+    function closeConfirm() {
+        confirmOpen = false;
+        // return focus into the flow so shortcuts keep working
+        setTimeout(() => (document.getElementById("amount") as HTMLElement | null)?.focus(), 0);
+    }
+
+
     const flowOpts = $derived({
-        onSave: () => { void save(); },
+        // Ctrl+Enter on a complete form: save directly, no dialog.
+        onSave: (_opts: { direct: boolean }) => { if (canSave) void save(); },
         isComplete,
-        onConfirm: () => { if (canSave) confirmOpen = true; },
+        // Plain Enter at the end always opens the confirm dialog.
+        onConfirm: () => { confirmOpen = true; },
     });
 
     // Live preview: how much of `amount` will settle which open bills (oldest->latest).
@@ -280,7 +289,7 @@
     </section>
 
     <footer class="foot">
-        <button class="save" data-flow="save" disabled={!canSave} onclick={requestSave}>
+        <button class="save" type="button" data-flow="save" disabled={!canSave} onclick={requestSave}>
             {saving ? "Saving…" : `Save ${kind === "PAYMENT" ? "payment" : "receipt"}`} <kbd>Ctrl ⏎</kbd>
         </button>
     </footer>
@@ -295,7 +304,7 @@
         confirmLabel={kind === "PAYMENT" ? "Post payment" : "Post receipt"}
         busy={saving}
         onconfirm={confirmSave}
-        oncancel={() => (confirmOpen = false)}/>{/if}
+        oncancel={closeConfirm}/>{/if}
 
 <style>
     .wrap {

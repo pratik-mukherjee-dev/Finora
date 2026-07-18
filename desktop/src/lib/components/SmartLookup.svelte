@@ -9,8 +9,9 @@
         onselect: (s: Suggestion) => void;
         oncreate: (typed: string) => void;
         onenter?: () => void;              // fired when Enter pressed on an already-resolved value
+        onemptyenter?: () => void;        // Enter pressed with no value + menu closed
     };
-    let {type, placeholder = "", value = $bindable(null), flow, onselect, oncreate, onenter}: Props = $props();
+    let {type, placeholder = "", value = $bindable(null), flow, onselect, oncreate, onenter, onemptyenter}: Props = $props();
 
     let inputEl: HTMLInputElement | null = $state(null);
     export function focus() {
@@ -75,12 +76,16 @@
         !results.some((r) => r.name.toLowerCase() === q.trim().toLowerCase())
     );
 
-        function onKey(e: KeyboardEvent) {
+    function onKey(e: KeyboardEvent) {
         if (e.key === "Enter" && !open) {
             // Nothing to pick from — treat Enter as "advance to next field".
             if (value) {
                 e.preventDefault();
                 onenter?.();
+            } else if (!q.trim()) {
+                // Empty and nothing to pick: let the screen collapse this row / advance.
+                e.preventDefault();
+                onemptyenter?.();
             }
             return;
         }

@@ -99,6 +99,7 @@ export function enterFlow(root: HTMLElement, opts: FlowOptions) {
         // Ctrl/Cmd+Enter anywhere: direct save. Confirm only if incomplete.
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
+            e.stopPropagation();               // don't let a mounted dialog also react
             if (current.isComplete()) current.onSave({ direct: true });
             else current.onConfirm();
             return;
@@ -106,8 +107,7 @@ export function enterFlow(root: HTMLElement, opts: FlowOptions) {
 
         if (e.key !== "Enter") return;
 
-        // Let composite widgets (lookup with an open menu, textareas) handle their
-        // own Enter — they opt out by setting data-flow-skip on the event target.
+        // Let composite widgets (lookup with an open menu, textareas) handle Enter.
         if (el.dataset.flowSkip === "1") return;
         if (el.tagName === "TEXTAREA" && !e.ctrlKey) return;
 
@@ -117,18 +117,33 @@ export function enterFlow(root: HTMLElement, opts: FlowOptions) {
 
         e.preventDefault();
 
-        // Terminal step (save button) or no further node → attempt save.
+        // Terminal step (save) or no further node -> confirm (opens dialog).
         const isTerminal = node.dataset.flow === "save";
         const moved = isTerminal ? false : advance(root, node);
         if (!moved) {
-            // Reached the end: normal Enter always confirms.
             current.onConfirm();
         }
     }
 
+    // Ctrl/Cmd+Enter should work anywhere in the app, even if focus left the form
+    // root (e.g. after closing a dialog with Esc).
+    function handleGlobalSave(e: KeyboardEvent) {
+        if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey)) return;
+        // If the event already targets inside root, the root listener handles it.
+        if (root.contains(e.target as Node)) return;
+        e.preventDefault();
+        if (current.isComplete()) current.onSave({ direct: true });
+        else current.onConfirm();
+    }
+
     root.addEventListener("keydown", handleKey);
+    window.addEventListener("keydown", handleGlobalSave);
     return {
         update(next: FlowOptions) { current = next; },
-        destroy() { root.removeEventListener("keydown", handleKey); },
+        destroy() {
+            root.removeEventListener("keydown", handleKey);
+            window.removeEventListener("keydown", handleGlobalSave);
+        },
     };
+
 }
