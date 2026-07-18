@@ -105,15 +105,19 @@ pub fn start(app: &AppHandle) -> Result<(Sidecars, u16), String> {
         .env("PATH", new_path)
         .spawn().map_err(|e| e.to_string())?;
 
-    // 6. wait until Django accepts TCP connections on its port
-    use std::net::TcpStream;
-    let addr = format!("127.0.0.1:{}", dj_port);
+    // 6. wait until Django actually serves the health endpoint (not just an open socket)
+    let health_url = format!("http://127.0.0.1:{}/health/", dj_port);
+    let mut ready = false;
     for _ in 0..60 {
-        if TcpStream::connect(&addr).is_ok() {
-            break;
+        match ureq::get(&health_url).timeout(Duration::from_millis(1500)).call() {
+            Ok(resp) if resp.status() == 200 => { ready = true; break; }
+            _ => std::thread::sleep(Duration::from_millis(500)),
         }
-        std::thread::sleep(Duration::from_millis(500));
     }
+    if !ready {
+        return Err("Django did not become healthy within timeout".into());
+    }
+
 
     Ok((Sidecars { postgres: Some(pg), django: Some(dj), pg_ctl, pgdata }, dj_port))
 }

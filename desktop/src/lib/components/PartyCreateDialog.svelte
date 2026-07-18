@@ -1,6 +1,7 @@
 <script lang="ts">
     import {request, type Suggestion} from "$lib/api";
     import {untrack} from "svelte";
+    import { advanceOrSubmit } from "$lib/flow";
 
     type Props = { initialName: string; oncreated: (p: Suggestion) => void; oncancel: () => void };
     let {initialName, oncreated, oncancel}: Props = $props();
@@ -47,7 +48,7 @@
 </script>
 
 <div class="backdrop" role="presentation" onclick={onBackdropClick}>
-    <form class="dialog" onsubmit={save}>
+    <form class="dialog" onsubmit={save} onkeydown={(e) => advanceOrSubmit(e, () => !busy && !!name.trim(), save)}>
         <h2>New party</h2>
         <input bind:value={name} placeholder="Name" use:focusOnMount/>
         <input bind:value={phone} placeholder="Phone (optional)"/>

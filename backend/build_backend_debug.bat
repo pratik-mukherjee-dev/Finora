@@ -1,6 +1,7 @@
 @echo off
 python -m nuitka ^
   --standalone ^
+  --onefile ^
   --output-filename=finora-backend-debug ^
   --include-package=apps ^
   --include-package=apps.common.migrations ^
@@ -19,6 +20,7 @@ python -m nuitka ^
   --include-package=rest_framework ^
   --include-package-data=rest_framework ^
   --include-package=rest_framework_simplejwt ^
+  --include-package-data=rest_framework_simplejwt ^
   --include-package=django_filters ^
   --include-package=psycopg ^
   --include-package=waitress ^

@@ -1,4 +1,6 @@
 <script lang="ts">
+    import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+    import { enterFlow } from "$lib/flow";
     import {auth} from "$lib/stores/auth.svelte";
     import {goto} from "$app/navigation";
     import {onMount} from "svelte";
@@ -50,6 +52,29 @@
     const canSave = $derived(!!party && !!companyId && Number(amount) > 0 && !saving);
     const allocated = $derived((result?.allocations ?? []).reduce((s, a) => s + (Number(a.amount) || 0), 0));
     const unallocated = $derived(result ? Math.max(0, (Number(result.amount) || 0) - allocated) : 0);
+
+    let confirmOpen = $state(false);
+
+    // Party, positive amount, and a date are the potential fields.
+    function isComplete(): boolean {
+        return !!party && !!companyId && Number(amount) > 0 && !!date;
+    }
+
+    function requestSave() {
+        if (!canSave) return;
+        confirmOpen = true;
+    }
+
+    async function confirmSave() {
+        confirmOpen = false;
+        await save();
+    }
+
+    const flowOpts = $derived({
+        onSave: () => { void save(); },
+        isComplete,
+        onConfirm: () => { if (canSave) confirmOpen = true; },
+    });
 
     // Live preview: how much of `amount` will settle which open bills (oldest->latest).
     const previewPlan = $derived.by(() => {
@@ -160,10 +185,10 @@
     const shell = registerScreen(() => ({
         title: "Settle",
         actions: [
-            {id: "set-save", label: "Save", icon: "✓", shortcut: "Ctrl+Enter", run: save},
+            {id: "set-save", label: "Save", icon: "✓", shortcut: "Ctrl+Enter", run: requestSave},
         ],
         shortcuts: [
-            {id: "set-k-save", keychord: "ctrl+enter", label: "Save", run: save},
+
         ],
         panel: [
             {id: "allocation", title: "Allocation", body: allocationPanel},
@@ -227,7 +252,7 @@
     {/if}
 {/snippet}
 
-<div class="wrap">
+<div class="wrap" use:enterFlow={flowOpts}>
     <div class="toggle">
         <button class:active={kind === "PAYMENT"} onclick={() => setKind("PAYMENT")}>Payment</button>
         <button class:active={kind === "RECEIVED"} onclick={() => setKind("RECEIVED")}>Received</button>
@@ -241,21 +266,21 @@
     <section class="head">
         <div class="field">
             <label for="party">Party</label>
-            <SmartLookup type="PARTY" placeholder="Search or create party…" value={party}
+            <SmartLookup type="PARTY" flow="party" placeholder="Search or create party…" value={party}
                          onselect={onPartySelect} oncreate={onPartyCreate}/>
         </div>
         <div class="field amt">
             <label for="amount">Amount</label>
-            <input id="amount" class="num" type="number" min="0" step="0.01" bind:value={amount}/>
+            <input id="amount" class="num" type="number" min="0" step="0.01" data-flow="amount" bind:value={amount}/>
         </div>
         <div class="field date">
             <label for="date">Date</label>
-            <input id="date" type="date" bind:value={date}/>
+            <input id="date" type="date" data-flow="date" bind:value={date}/>
         </div>
     </section>
 
     <footer class="foot">
-        <button class="save" disabled={!canSave} onclick={save}>
+        <button class="save" data-flow="save" disabled={!canSave} onclick={requestSave}>
             {saving ? "Saving…" : `Save ${kind === "PAYMENT" ? "payment" : "receipt"}`} <kbd>Ctrl ⏎</kbd>
         </button>
     </footer>
@@ -263,6 +288,14 @@
 
 {#if partyDialog !== null}
     <PartyCreateDialog initialName={partyDialog} oncreated={onPartyCreated} oncancel={() => (partyDialog = null)}/>{/if}
+{#if confirmOpen}
+    <ConfirmDialog
+        title={kind === "PAYMENT" ? "Confirm payment" : "Confirm receipt"}
+        message={`Party: ${party?.name ?? "—"} · Amount ${Number(amount).toFixed(2)}. Auto-settle oldest → latest?`}
+        confirmLabel={kind === "PAYMENT" ? "Post payment" : "Post receipt"}
+        busy={saving}
+        onconfirm={confirmSave}
+        oncancel={() => (confirmOpen = false)}/>{/if}
 
 <style>
     .wrap {

@@ -5,11 +5,12 @@
         type: "ITEM" | "PARTY";
         placeholder?: string;
         value?: Suggestion | null;
+        flow?: string;
         onselect: (s: Suggestion) => void;
         oncreate: (typed: string) => void;
         onenter?: () => void;              // fired when Enter pressed on an already-resolved value
     };
-    let {type, placeholder = "", value = $bindable(null), onselect, oncreate, onenter}: Props = $props();
+    let {type, placeholder = "", value = $bindable(null), flow, onselect, oncreate, onenter}: Props = $props();
 
     let inputEl: HTMLInputElement | null = $state(null);
     export function focus() {
@@ -101,9 +102,11 @@
 </script>
 
 <div class="lookup">
-    <input
+        <input
             bind:this={inputEl}
             autocomplete="off"
+            data-flow={flow}
+            data-flow-skip={open ? "1" : undefined}
             onblur={() => setTimeout(() => (open = false), 120)}
             onfocus={() => { if (results.length) open = true; }}
             oninput={onInput}
@@ -111,6 +114,7 @@
             {placeholder}
             value={q}
     />
+
     {#if open}
         <ul class="menu" role="listbox">
             {#each results as r, i (r.id)}

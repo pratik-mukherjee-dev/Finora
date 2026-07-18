@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { enterFlow } from "$lib/flow";
     import {auth} from "$lib/stores/auth.svelte";
     import {goto} from "$app/navigation";
     import {onMount} from "svelte";
@@ -205,7 +206,7 @@
     function onPartyCreated(p: Suggestion) {
         party = p;
         partyDialog = null;
-        setTimeout(() => flowNext(document.getElementById("date")!), 0);
+        setTimeout(() => (document.getElementById("date") as HTMLElement | null)?.focus(), 0);
     }
 
     async function resolveRate(line: Line, itemId: number) {
@@ -279,30 +280,6 @@
         else setTimeout(() => document.querySelector<HTMLElement>('[data-flow="charge"]')?.focus(), 0);
     }
 
-    // ── enter-flow helpers ────────────────────────────────────────────────────
-    function flowNext(current: HTMLElement) {
-        const nodes = Array.from(document.querySelectorAll<HTMLElement>("[data-flow]"))
-            .filter((n) => n.offsetParent !== null && !(n as HTMLButtonElement).disabled);
-        const i = nodes.indexOf(current);
-        const next = nodes[i + 1];
-        if (next) {
-            next.focus();
-            if (next instanceof HTMLInputElement) next.select();
-        }
-    }
-
-    function onFlowKey(e: KeyboardEvent) {
-        if (e.key !== "Enter") return;
-        const el = e.target as HTMLElement;
-        if (el.dataset.flow === "save") {
-            e.preventDefault();
-            requestSave();
-            return;
-        }
-        e.preventDefault();
-        flowNext(el);
-    }
-
     function focusParty() {
         setTimeout(() => partyLookup?.focus(), 0);
     }
@@ -316,6 +293,17 @@
             el?.select();
         }, 0);
     }
+
+    function isComplete(): boolean {
+        if (!party || !companyId) return false;
+        return lines.every((l) => !l.item || Number(l.qty) > 0);
+    }
+
+    const flowOpts = $derived({
+        onSave: () => { void save(); },
+        isComplete,
+        onConfirm: () => { if (canSave) confirmOpen = true; },
+    });
 
     // ── save via confirmation ─────────────────────────────────────────────────
     function requestSave() {
@@ -405,7 +393,6 @@
             {id: "sal-k-add", keychord: "alt+a", label: "Add line", run: addLine},
             {id: "sal-k-charge", keychord: "alt+i", label: "Add charge", run: addCharge},
             {id: "sal-k-focus-charge", keychord: "alt+g", label: "Focus charges", run: focusCharges},
-            {id: "sal-k-save", keychord: "ctrl+enter", label: "Save", run: requestSave},
         ],
         panel: [
             {id: "history", title: "History", body: historyPanel},
@@ -463,7 +450,7 @@
     {/if}
 {/snippet}
 
-<div class="wrap">
+<div class="wrap" use:enterFlow={flowOpts}>
     {#if editingId != null}
         <div class="banner edit">Editing — saving will <strong>cancel the original</strong> and replace it.
             <button class="linkbtn" onclick={resetForm}>Discard</button>
@@ -481,14 +468,13 @@
     <section class="head">
         <div class="field">
             <label for="party">Party</label>
-            <SmartLookup type="PARTY" placeholder="Search or create party…" value={party}
+            <SmartLookup type="PARTY" flow="party" placeholder="Search or create party…" value={party}
                          bind:this={partyLookup}
-                         onselect={onPartySelect} oncreate={onPartyCreate}
-                         onenter={() => setTimeout(() => flowNext(document.getElementById('date')!), 0)}/>
+                         onselect={onPartySelect} oncreate={onPartyCreate}/>
         </div>
         <div class="field date">
             <label for="date">Date</label>
-            <input id="date" type="date" data-flow="date" bind:value={date} onkeydown={onFlowKey}/>
+            <input id="date" type="date" data-flow="date" bind:value={date}/>
         </div>
         {#if isMulti}
             <label class="seg"><input type="checkbox" bind:checked={segregate}/> Segregate</label>
@@ -500,21 +486,20 @@
         {#each lines as line (line.key)}
             <div class="grow">
                 <div class="cell item">
-                    <SmartLookup type="ITEM" placeholder="Search or create item…" value={line.item}
-                                 onselect={(s) => onItemSelect(line, s)} oncreate={(t) => onItemCreate(line, t)}
-                                 onenter={() => focusRowQty(line.key)}/>
+                    <SmartLookup type="ITEM" flow="item" placeholder="Search or create item…" value={line.item}
+                                 onselect={(s) => onItemSelect(line, s)} oncreate={(t) => onItemCreate(line, t)}/>
                     {#if line.resolving}<span class="hint">Resolving rate…</span>
                     {:else if line.note}<span class="hint warn">{line.note}</span>{/if}
                 </div>
                 <div class="qtycell">
                     <input class="num" type="number" min="0" step="0.001" data-flow="qty"
-                           bind:value={line.qty} oninput={() => onQtyOrRate(line)} onkeydown={onFlowKey}/>
+                           bind:value={line.qty} oninput={() => onQtyOrRate(line)}/>
                     {#if line.item?.base_unit}<span class="unit">{line.item.base_unit}</span>{/if}
                 </div>
                 <input class="num" type="number" min="0" step="0.01" data-flow="rate"
-                       bind:value={line.rate} oninput={() => onQtyOrRate(line)} onkeydown={onFlowKey}/>
+                       bind:value={line.rate} oninput={() => onQtyOrRate(line)}/>
                 <input class="num" type="number" min="0" step="0.01" data-flow="amount"
-                       bind:value={line.amount} oninput={() => onAmount(line)} onkeydown={onFlowKey}/>
+                       bind:value={line.amount} oninput={() => onAmount(line)}/>
                 <button class="del" title="Remove line" onclick={() => removeLine(line.key)}>✕</button>
             </div>
         {/each}
@@ -526,7 +511,7 @@
         {#each charges as c (c.key)}
             {@const kind = kindOf(c)}
             <div class="chrow">
-                <select class="chsel" data-flow="charge" bind:value={c.ledgerId} onkeydown={onFlowKey}>
+                <select class="chsel" data-flow="charge" bind:value={c.ledgerId}>
                     <option value={null} disabled>Select charge…</option>
                     {#each chargeLedgers as l (l.id)}
                         <option value={l.id}>{l.name}</option>
@@ -541,7 +526,7 @@
                                 onclick={() => (c.mode = "AMOUNT")}>₹</button>
                     </div>
                     <input class="num" type="number" min="0" step="0.01" data-flow="charge-val"
-                           bind:value={c.value} onkeydown={onFlowKey}
+                           bind:value={c.value}
                            placeholder={c.mode === "PERCENT" ? "0 %" : "0.00"}/>
                 {:else if kind === "ROUND_OFF"}
                     <span class="chspan">auto</span>
@@ -570,11 +555,12 @@
     </section>
 
     <footer class="foot">
-        <button class="save" data-flow="save" disabled={!canSave} onclick={requestSave} onkeydown={onFlowKey}>
+        <button class="save" data-flow="save" disabled={!canSave} onclick={requestSave}>
             {saving ? "Saving…" : (editingId != null ? "Save changes" : "Save sale")} <kbd>Ctrl ⏎</kbd>
         </button>
     </footer>
 </div>
+
 
 {#if partyDialog !== null}
     <PartyCreateDialog initialName={partyDialog} oncreated={onPartyCreated} oncancel={() => (partyDialog = null)}/>{/if}
