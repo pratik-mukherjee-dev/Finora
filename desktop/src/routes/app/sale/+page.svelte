@@ -6,6 +6,7 @@
     import SmartLookup from "$lib/components/SmartLookup.svelte";
     import PartyCreateDialog from "$lib/components/PartyCreateDialog.svelte";
     import ItemCreateDialog from "$lib/components/ItemCreateDialog.svelte";
+    import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
     import {registerScreen} from "$lib/shell/useScreen.svelte";
 
     onMount(() => {
@@ -13,9 +14,25 @@
         if (auth.needsSetup) return void goto("/setup");
         if (auth.needsFy) return void goto("/fy");
         void loadHistory();
+        void loadLedgers();
+        focusParty();
     });
 
     type Mapping = { id: number; item: number; item_name: string; company: number; rate: number; stock: number; };
+    // A charge ledger straight from /api/ledgers/. `name` and `kind` drive the UI.
+    type Ledger = {
+        id: number; company: number | null; name: string;
+        kind: "DISCOUNT" | "ROUND_OFF" | "TAX" | "OTHER"; is_system: boolean; gst_rate: number | null;
+    };
+    // Read-back charge row from a saved voucher.
+    type SavedCharge = {
+        id: number; ledger: number; ledger_name: string; charge_type: string;
+        mode: string; input_value: number; amount: number; sort_order: number;
+    };
+    // A charge row being edited in the form. Its label/kind come from the picked ledger.
+    type ChargeRow = {
+        key: number; ledgerId: number | null; mode: "PERCENT" | "AMOUNT"; value: string;
+    };
     type Line = {
         key: number; item: Suggestion | null; company: number | null;
         qty: string; rate: string; amount: string; resolving: boolean; note: string;
@@ -32,12 +49,16 @@
     type Sale = {
         id: number; company: number; party: number; party_name: string;
         number: string; date: string; segregate: boolean; total_amount: number;
-        is_cancelled: boolean; lines: SaleLine[]; derived: Derived[];
+        is_cancelled: boolean; lines: SaleLine[]; derived: Derived[]; charges: SavedCharge[];
     };
 
     let seq = 0;
+    let chargeSeq = 0;
     const newLine = (): Line => ({
         key: ++seq, item: null, company: null, qty: "1", rate: "0", amount: "0.00", resolving: false, note: "",
+    });
+    const newCharge = (ledgerId: number | null = null): ChargeRow => ({
+        key: ++chargeSeq, ledgerId, mode: "PERCENT", value: "0",
     });
 
     const today = new Date().toISOString().slice(0, 10);
@@ -54,11 +75,45 @@
     let partyDialog = $state<string | null>(null);
     let itemDialog = $state<{ text: string; lineKey: number } | null>(null);
 
+    // ── charges: ledger catalogue + dynamic charge rows ───────────────────────
+    let ledgers = $state<Ledger[]>([]);
+    let charges = $state<ChargeRow[]>([]);
+    let lastLedgerCompany = $state<number | null>(null);
+
+    // ── enter-flow / confirm state ────────────────────────────────────────────
+    let confirmOpen = $state(false);
+    let partyLookup = $state<{ focus: () => void } | null>(null);
+
     const companyId = $derived(auth.currentCompany?.id ?? null);
     const isMulti = $derived(auth.mode === "multi");
     const total = $derived(lines.reduce((s, l) => s + (Number(l.amount) || 0), 0));
     const canSave = $derived(!!party && !!companyId && lines.some((l) => l.item && Number(l.qty) > 0) && !saving);
     const round2 = (n: number) => (Math.round(n * 100) / 100).toFixed(2);
+
+    // Charge ledgers we render in v1: discount + round-off only (TAX/OTHER = v2).
+    const chargeLedgers = $derived(ledgers.filter((l) => l.kind === "DISCOUNT" || l.kind === "ROUND_OFF"));
+    const ledgerById = $derived(new Map(ledgers.map((l) => [l.id, l])));
+
+    function kindOf(row: ChargeRow): Ledger["kind"] | null {
+        return row.ledgerId != null ? (ledgerById.get(row.ledgerId)?.kind ?? null) : null;
+    }
+
+    // ── client-side PREVIEW only (server signs & rounds authoritatively) ───────
+    // Discounts first (on subtotal), then a single round-off delta on the result.
+    const discountPreview = $derived.by(() => {
+        let d = 0;
+        for (const c of charges) {
+            if (kindOf(c) !== "DISCOUNT") continue;
+            const v = Number(c.value) || 0;
+            if (v <= 0) continue;
+            d += c.mode === "PERCENT" ? (total * v) / 100 : v;
+        }
+        return d;
+    });
+    const afterDiscount = $derived(total - discountPreview);
+    const hasRoundOff = $derived(charges.some((c) => kindOf(c) === "ROUND_OFF"));
+    const roundDelta = $derived(hasRoundOff ? Math.round(afterDiscount) - afterDiscount : 0);
+    const finalBill = $derived(afterDiscount + roundDelta);
 
     function onQtyOrRate(l: Line) {
         l.amount = round2((Number(l.qty) || 0) * (Number(l.rate) || 0));
@@ -68,6 +123,23 @@
         const q = Number(l.qty) || 0;
         l.rate = q > 0 ? round2((Number(l.amount) || 0) / q) : "0";
     }
+
+    async function loadLedgers() {
+        if (companyId == null) return;
+        try {
+            const p = new URLSearchParams({company: String(companyId)});
+            const rows = await request<Ledger[] | { results?: Ledger[] }>(`/api/ledgers/?${p.toString()}`);
+            ledgers = Array.isArray(rows) ? rows : (rows?.results ?? []);
+            lastLedgerCompany = companyId;
+        } catch {
+            ledgers = [];
+        }
+    }
+
+    // Re-fetch ledgers when the active company changes (scoped shared + own).
+    $effect(() => {
+        if (companyId != null && companyId !== lastLedgerCompany) void loadLedgers();
+    });
 
     async function loadHistory() {
         if (!companyId) return;
@@ -97,6 +169,17 @@
             resolving: false, note: "",
         }));
         if (lines.length === 0) lines = [newLine()];
+        hydrateCharges(row.charges ?? []);
+    }
+
+    // Rebuild editable charge rows from saved charges, keyed on the ledger id.
+    function hydrateCharges(rows: SavedCharge[]) {
+        charges = rows.map((c) => ({
+            key: ++chargeSeq,
+            ledgerId: c.ledger,
+            mode: c.mode === "AMOUNT" ? "AMOUNT" : "PERCENT",
+            value: String(c.input_value ?? 0),
+        }));
     }
 
     function resetForm() {
@@ -105,8 +188,10 @@
         date = today;
         segregate = false;
         lines = [newLine()];
+        charges = [];
         error = null;
         saved = null;
+        focusParty();
     }
 
     function onPartySelect(s: Suggestion) {
@@ -120,6 +205,7 @@
     function onPartyCreated(p: Suggestion) {
         party = p;
         partyDialog = null;
+        setTimeout(() => flowNext(document.getElementById("date")!), 0);
     }
 
     async function resolveRate(line: Line, itemId: number) {
@@ -155,10 +241,12 @@
 
     function onItemCreated(i: Suggestion) {
         const target = lines.find((l) => l.key === itemDialog?.lineKey);
+        const key = itemDialog?.lineKey;
         itemDialog = null;
         if (target) {
             target.item = i;
             void resolveRate(target, i.id);
+            if (key != null) focusRowQty(key);
         }
     }
 
@@ -168,6 +256,94 @@
 
     function removeLine(key: number) {
         lines = lines.length > 1 ? lines.filter((l) => l.key !== key) : lines;
+    }
+
+    // ── charge row management ─────────────────────────────────────────────────
+    function addCharge() {
+        // Default the picker to the first unused charge ledger, if any.
+        const used = new Set(charges.map((c) => c.ledgerId));
+        const first = chargeLedgers.find((l) => !used.has(l.id)) ?? chargeLedgers[0] ?? null;
+        charges = [...charges, newCharge(first?.id ?? null)];
+        setTimeout(() => {
+            const rows = document.querySelectorAll<HTMLElement>('[data-flow="charge"]');
+            rows[rows.length - 1]?.focus();
+        }, 0);
+    }
+
+    function removeCharge(key: number) {
+        charges = charges.filter((c) => c.key !== key);
+    }
+
+    function focusCharges() {
+        if (charges.length === 0) addCharge();
+        else setTimeout(() => document.querySelector<HTMLElement>('[data-flow="charge"]')?.focus(), 0);
+    }
+
+    // ── enter-flow helpers ────────────────────────────────────────────────────
+    function flowNext(current: HTMLElement) {
+        const nodes = Array.from(document.querySelectorAll<HTMLElement>("[data-flow]"))
+            .filter((n) => n.offsetParent !== null && !(n as HTMLButtonElement).disabled);
+        const i = nodes.indexOf(current);
+        const next = nodes[i + 1];
+        if (next) {
+            next.focus();
+            if (next instanceof HTMLInputElement) next.select();
+        }
+    }
+
+    function onFlowKey(e: KeyboardEvent) {
+        if (e.key !== "Enter") return;
+        const el = e.target as HTMLElement;
+        if (el.dataset.flow === "save") {
+            e.preventDefault();
+            requestSave();
+            return;
+        }
+        e.preventDefault();
+        flowNext(el);
+    }
+
+    function focusParty() {
+        setTimeout(() => partyLookup?.focus(), 0);
+    }
+
+    function focusRowQty(key: number) {
+        setTimeout(() => {
+            const rows = Array.from(document.querySelectorAll<HTMLElement>(".grow"));
+            const idx = lines.findIndex((l) => l.key === key);
+            const el = rows[idx]?.querySelector<HTMLInputElement>('[data-flow="qty"]');
+            el?.focus();
+            el?.select();
+        }, 0);
+    }
+
+    // ── save via confirmation ─────────────────────────────────────────────────
+    function requestSave() {
+        if (!canSave) return;
+        confirmOpen = true;
+    }
+
+    async function confirmSave() {
+        confirmOpen = false;
+        await save();
+    }
+
+    // Build the backend charge payload from the dynamic rows, driven by ledger kind.
+    function buildPayloadCharges() {
+        const out: Array<Record<string, unknown>> = [];
+        for (const c of charges) {
+            if (c.ledgerId == null) continue;
+            const kind = ledgerById.get(c.ledgerId)?.kind;
+            if (kind === "DISCOUNT") {
+                const v = Number(c.value) || 0;
+                if (v <= 0) continue;
+                out.push({ledger_id: c.ledgerId, charge_type: "DISCOUNT", mode: c.mode, input_value: v});
+            } else if (kind === "ROUND_OFF") {
+                out.push({ledger_id: c.ledgerId, charge_type: "ROUND_OFF"});
+            }
+            // TAX / OTHER: v2 — skipped in v1.
+        }
+        return out;
     }
 
     async function save() {
@@ -193,6 +369,7 @@
                 body: JSON.stringify({
                     company: companyId, party: party.id, date, number: null,
                     segregate: isMulti ? segregate : false, lines: payloadLines,
+                    charges: buildPayloadCharges(),
                 }),
             });
             saved = res;
@@ -200,7 +377,9 @@
             party = null;
             segregate = false;
             lines = [newLine()];
+            charges = [];
             await loadHistory();
+            focusParty();
         } catch (e) {
             error = e instanceof Error ? e.message : "Could not save sale.";
         } finally {
@@ -218,12 +397,15 @@
         actions: [
             {id: "sal-new", label: "New", icon: "＋", shortcut: "Ctrl+N", run: resetForm},
             {id: "sal-add", label: "Add line", icon: "▸", shortcut: "Alt+A", run: addLine},
-            {id: "sal-save", label: "Save", icon: "✓", shortcut: "Ctrl+Enter", run: save},
+            {id: "sal-charge", label: "Add charge", icon: "%", shortcut: "Alt+I", run: addCharge},
+            {id: "sal-save", label: "Save", icon: "✓", shortcut: "Ctrl+Enter", run: requestSave},
         ],
         shortcuts: [
             {id: "sal-k-new", keychord: "ctrl+n", label: "New", run: resetForm},
             {id: "sal-k-add", keychord: "alt+a", label: "Add line", run: addLine},
-            {id: "sal-k-save", keychord: "ctrl+enter", label: "Save", run: save},
+            {id: "sal-k-charge", keychord: "alt+i", label: "Add charge", run: addCharge},
+            {id: "sal-k-focus-charge", keychord: "alt+g", label: "Focus charges", run: focusCharges},
+            {id: "sal-k-save", keychord: "ctrl+enter", label: "Save", run: requestSave},
         ],
         panel: [
             {id: "history", title: "History", body: historyPanel},
@@ -300,11 +482,13 @@
         <div class="field">
             <label for="party">Party</label>
             <SmartLookup type="PARTY" placeholder="Search or create party…" value={party}
-                         onselect={onPartySelect} oncreate={onPartyCreate}/>
+                         bind:this={partyLookup}
+                         onselect={onPartySelect} oncreate={onPartyCreate}
+                         onenter={() => setTimeout(() => flowNext(document.getElementById('date')!), 0)}/>
         </div>
         <div class="field date">
             <label for="date">Date</label>
-            <input id="date" type="date" bind:value={date}/>
+            <input id="date" type="date" data-flow="date" bind:value={date} onkeydown={onFlowKey}/>
         </div>
         {#if isMulti}
             <label class="seg"><input type="checkbox" bind:checked={segregate}/> Segregate</label>
@@ -317,25 +501,76 @@
             <div class="grow">
                 <div class="cell item">
                     <SmartLookup type="ITEM" placeholder="Search or create item…" value={line.item}
-                                 onselect={(s) => onItemSelect(line, s)} oncreate={(t) => onItemCreate(line, t)}/>
+                                 onselect={(s) => onItemSelect(line, s)} oncreate={(t) => onItemCreate(line, t)}
+                                 onenter={() => focusRowQty(line.key)}/>
                     {#if line.resolving}<span class="hint">Resolving rate…</span>
                     {:else if line.note}<span class="hint warn">{line.note}</span>{/if}
                 </div>
                 <div class="qtycell">
-                    <input class="num" type="number" min="0" step="0.001" bind:value={line.qty} oninput={() => onQtyOrRate(line)}/>
+                    <input class="num" type="number" min="0" step="0.001" data-flow="qty"
+                           bind:value={line.qty} oninput={() => onQtyOrRate(line)} onkeydown={onFlowKey}/>
                     {#if line.item?.base_unit}<span class="unit">{line.item.base_unit}</span>{/if}
                 </div>
-                <input class="num" type="number" min="0" step="0.01" bind:value={line.rate} oninput={() => onQtyOrRate(line)}/>
-                <input class="num" type="number" min="0" step="0.01" bind:value={line.amount} oninput={() => onAmount(line)}/>
+                <input class="num" type="number" min="0" step="0.01" data-flow="rate"
+                       bind:value={line.rate} oninput={() => onQtyOrRate(line)} onkeydown={onFlowKey}/>
+                <input class="num" type="number" min="0" step="0.01" data-flow="amount"
+                       bind:value={line.amount} oninput={() => onAmount(line)} onkeydown={onFlowKey}/>
                 <button class="del" title="Remove line" onclick={() => removeLine(line.key)}>✕</button>
             </div>
         {/each}
         <button class="addline" onclick={addLine}>+ Add line <kbd>Alt A</kbd></button>
     </section>
 
+    <section class="charges">
+        <div class="chhead"><span>Charges</span></div>
+        {#each charges as c (c.key)}
+            {@const kind = kindOf(c)}
+            <div class="chrow">
+                <select class="chsel" data-flow="charge" bind:value={c.ledgerId} onkeydown={onFlowKey}>
+                    <option value={null} disabled>Select charge…</option>
+                    {#each chargeLedgers as l (l.id)}
+                        <option value={l.id}>{l.name}</option>
+                    {/each}
+                </select>
+
+                {#if kind === "DISCOUNT"}
+                    <div class="chmode">
+                        <button type="button" class:active={c.mode === "PERCENT"}
+                                onclick={() => (c.mode = "PERCENT")}>%</button>
+                        <button type="button" class:active={c.mode === "AMOUNT"}
+                                onclick={() => (c.mode = "AMOUNT")}>₹</button>
+                    </div>
+                    <input class="num" type="number" min="0" step="0.01" data-flow="charge-val"
+                           bind:value={c.value} onkeydown={onFlowKey}
+                           placeholder={c.mode === "PERCENT" ? "0 %" : "0.00"}/>
+                {:else if kind === "ROUND_OFF"}
+                    <span class="chspan">auto</span>
+                    <span class="chhint">server computes the delta</span>
+                {:else}
+                    <span class="chspan"></span><span></span>
+                {/if}
+
+                <button class="del" title="Remove charge" onclick={() => removeCharge(c.key)}>✕</button>
+            </div>
+        {/each}
+        <button class="addline" onclick={addCharge}
+                disabled={chargeLedgers.length === 0}>+ Add charge <kbd>Alt I</kbd></button>
+    </section>
+
+    <section class="totals">
+        <div class="trow"><span>Line-item total</span><span>{total.toFixed(2)}</span></div>
+        {#if discountPreview > 0}
+            <div class="trow discount"><span>Discount</span><span>− {discountPreview.toFixed(2)}</span></div>
+        {/if}
+        {#if hasRoundOff && roundDelta !== 0}
+            <div class="trow round"><span>Round off</span>
+                <span>{roundDelta >= 0 ? "+" : "−"} {Math.abs(roundDelta).toFixed(2)}</span></div>
+        {/if}
+        <div class="trow final"><span>Final bill</span><strong>{finalBill.toFixed(2)}</strong></div>
+    </section>
+
     <footer class="foot">
-        <div class="total">Total <strong>{total.toFixed(2)}</strong></div>
-        <button class="save" disabled={!canSave} onclick={save}>
+        <button class="save" data-flow="save" disabled={!canSave} onclick={requestSave} onkeydown={onFlowKey}>
             {saving ? "Saving…" : (editingId != null ? "Save changes" : "Save sale")} <kbd>Ctrl ⏎</kbd>
         </button>
     </footer>
@@ -346,6 +581,14 @@
 {#if itemDialog !== null && companyId}
     <ItemCreateDialog initialName={itemDialog.text} companyId={companyId} oncreated={onItemCreated}
                       oncancel={() => (itemDialog = null)}/>{/if}
+{#if confirmOpen}
+    <ConfirmDialog
+        title={editingId != null ? "Replace this sale?" : "Confirm sale"}
+        message={`Party: ${party?.name ?? "—"} · Final bill ${finalBill.toFixed(2)}. ${editingId != null ? "The original will be cancelled and replaced." : "Post this voucher?"}`}
+        confirmLabel={editingId != null ? "Replace" : "Post sale"}
+        busy={saving}
+        onconfirm={confirmSave}
+        oncancel={() => (confirmOpen = false)}/>{/if}
 
 <style>
     .wrap {
@@ -527,16 +770,122 @@
         background: var(--accent-soft);
     }
 
+    .addline:disabled {
+        opacity: .5;
+        cursor: default;
+    }
+
+    /* ── charges section ── */
+    .charges {
+        margin-top: 14px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--bg-elevated);
+        padding: 8px 14px 6px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-width: 560px;
+        margin-left: auto;
+    }
+
+    .chhead {
+        color: var(--text-muted);
+        font-size: 12px;
+        padding: 4px 0 2px;
+    }
+
+    .chrow {
+        display: grid;
+        grid-template-columns: 1fr auto 130px 32px;
+        gap: 10px;
+        align-items: center;
+    }
+
+    .chsel {
+        padding: 8px 10px;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-hi);
+        background: var(--bg-app);
+        color: var(--text);
+        font-size: 13px;
+    }
+
+    .chmode {
+        display: inline-flex;
+        border: 1px solid var(--border-hi);
+        border-radius: 6px;
+        overflow: hidden;
+    }
+
+    .chmode button {
+        background: transparent;
+        border: none;
+        color: var(--text-muted);
+        padding: 6px 10px;
+        cursor: pointer;
+        font-size: 13px;
+    }
+
+    .chmode button.active {
+        background: var(--accent);
+        color: #fff;
+    }
+
+    .chspan {
+        font-size: 13px;
+        color: var(--text-muted);
+        text-align: right;
+    }
+
+    .chhint {
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+
+    /* ── totals breakdown ── */
+    .totals {
+        margin-top: 14px;
+        max-width: 560px;
+        margin-left: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .trow {
+        display: flex;
+        justify-content: space-between;
+        font-size: 14px;
+        color: var(--text);
+        padding: 2px 2px;
+    }
+
+    .trow.discount {
+        color: var(--danger);
+    }
+
+    .trow.round {
+        color: var(--warn);
+    }
+
+    .trow.final {
+        border-top: 1px solid var(--border-hi);
+        padding-top: 8px;
+        margin-top: 4px;
+        font-size: 16px;
+    }
+
+    .trow.final strong {
+        color: var(--ok);
+    }
+
     .foot {
         display: flex;
         justify-content: flex-end;
         gap: 24px;
         align-items: center;
         margin-top: 20px;
-    }
-
-    .total {
-        font-size: 15px;
     }
 
     .save {

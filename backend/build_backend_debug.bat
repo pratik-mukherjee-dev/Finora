@@ -3,11 +3,22 @@ python -m nuitka ^
   --standalone ^
   --output-filename=finora-backend-debug ^
   --include-package=apps ^
+  --include-package=apps.common.migrations ^
+  --include-package=apps.accounts.migrations ^
+  --include-package=apps.financialyear.migrations ^
+  --include-package=apps.catalogue.migrations ^
+  --include-package=apps.parties.migrations ^
+  --include-package=apps.stock.migrations ^
+  --include-package=apps.vouchers.migrations ^
+  --include-package=apps.search.migrations ^
+  --include-package=apps.reports.migrations ^
+  --include-package=apps.ledgers.migrations ^
   --include-package=config ^
   --include-package=django ^
   --include-package-data=django ^
   --include-package=rest_framework ^
   --include-package-data=rest_framework ^
+  --include-package=rest_framework_simplejwt ^
   --include-package=django_filters ^
   --include-package=psycopg ^
   --include-package=waitress ^

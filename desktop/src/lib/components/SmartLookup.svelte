@@ -7,8 +7,15 @@
         value?: Suggestion | null;
         onselect: (s: Suggestion) => void;
         oncreate: (typed: string) => void;
+        onenter?: () => void;              // fired when Enter pressed on an already-resolved value
     };
-    let {type, placeholder = "", value = $bindable(null), onselect, oncreate}: Props = $props();
+    let {type, placeholder = "", value = $bindable(null), onselect, oncreate, onenter}: Props = $props();
+
+    let inputEl: HTMLInputElement | null = $state(null);
+    export function focus() {
+        inputEl?.focus();
+        inputEl?.select();
+    }
 
     let q = $state(value?.name ?? "");
     let open = $state(false);
@@ -53,6 +60,7 @@
         open = false;
         onselect(s);
         recordUsage(type, s.id);
+        onenter?.();                        // move focus to next field after choosing
     }
 
     function onInput(e: Event) {
@@ -66,7 +74,15 @@
         !results.some((r) => r.name.toLowerCase() === q.trim().toLowerCase())
     );
 
-    function onKey(e: KeyboardEvent) {
+        function onKey(e: KeyboardEvent) {
+        if (e.key === "Enter" && !open) {
+            // Nothing to pick from — treat Enter as "advance to next field".
+            if (value) {
+                e.preventDefault();
+                onenter?.();
+            }
+            return;
+        }
         if (!open) return;
         if (e.key === "ArrowDown") {
             active = Math.min(active + 1, results.length - 1);
@@ -86,6 +102,7 @@
 
 <div class="lookup">
     <input
+            bind:this={inputEl}
             autocomplete="off"
             onblur={() => setTimeout(() => (open = false), 120)}
             onfocus={() => { if (results.length) open = true; }}

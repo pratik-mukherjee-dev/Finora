@@ -40,7 +40,16 @@ def main():
     # set DATABASE_URL=postgres://finora:finora@127.0.0.1:<PORT>/finora
     # python manage.py createsuperuser
 
-    call_command("migrate", interactive=False, verbosity=0, stdout=io.StringIO())
+    # Log migrate output to a file next to the runtime config so failures in the
+    # windowed build are diagnosable instead of silently swallowed.
+    log_path = Path(rc).with_name("backend-migrate.log")
+    with open(log_path, "w", encoding="utf-8") as logf:
+        try:
+            call_command("migrate", interactive=False, verbosity=1, stdout=logf, stderr=logf)
+        except Exception:
+            import traceback
+            traceback.print_exc(file=logf)
+            raise
 
     from waitress import serve
     from config.wsgi import application

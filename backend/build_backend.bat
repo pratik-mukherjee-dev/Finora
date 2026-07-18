@@ -4,6 +4,16 @@ python -m nuitka ^
   --onefile ^
   --output-filename=finora-backend ^
   --include-package=apps ^
+  --include-package=apps.common.migrations ^
+  --include-package=apps.accounts.migrations ^
+  --include-package=apps.financialyear.migrations ^
+  --include-package=apps.catalogue.migrations ^
+  --include-package=apps.parties.migrations ^
+  --include-package=apps.stock.migrations ^
+  --include-package=apps.vouchers.migrations ^
+  --include-package=apps.search.migrations ^
+  --include-package=apps.reports.migrations ^
+  --include-package=apps.ledgers.migrations ^
   --include-package=config ^
   --include-package=django ^
   --include-package-data=django ^
@@ -16,6 +26,8 @@ python -m nuitka ^
   --include-package=waitress ^
   --include-module=config.wsgi ^
   --module-parameter=django-settings-module=config.settings.production ^
+  --include-data-dir=apps=apps ^
+  --include-data-dir=config=config ^
   --assume-yes-for-downloads ^
   --windows-console-mode=disable ^
   run_server.py
