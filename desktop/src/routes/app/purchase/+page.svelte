@@ -93,6 +93,26 @@
     const chargeLedgers = $derived(ledgers);
     const ledgerById = $derived(new Map(ledgers.map((l) => [l.id, l])));
 
+    // Options for a given charge row: all charge ledgers minus those already
+    // chosen in OTHER rows (keep this row's own pick so it still displays).
+    function optionsFor(row: ChargeRow) {
+        const usedElsewhere = new Set(
+            charges.filter((c) => c.key !== row.key && c.ledgerId != null).map((c) => c.ledgerId)
+        );
+        return chargeLedgers.filter((l) => l.id === row.ledgerId || !usedElsewhere.has(l.id));
+    }
+
+    // True when every available charge ledger is already used across rows.
+    const allChargesUsed = $derived.by(() => {
+        const used = new Set(charges.filter((c) => c.ledgerId != null).map((c) => c.ledgerId));
+        return chargeLedgers.length > 0 && chargeLedgers.every((l) => used.has(l.id));
+    });
+
+    function focusSave() {
+        setTimeout(() => document.querySelector<HTMLElement>('[data-flow="save"]')?.focus(), 0);
+    }
+
+
     function kindOf(row: ChargeRow): Ledger["kind"] | null {
         return row.ledgerId != null ? (ledgerById.get(row.ledgerId)?.kind ?? null) : null;
     }
@@ -322,14 +342,25 @@
         }, 0);
     }
 
-    // Enter on the last charge's value: chain a new charge (keeps Alt+I too).
+    // Enter on the last charge's value: chain a new charge. Never let it reach
+    // the flow root (which would also open the confirm dialog).
     function onChargeEnter(e: KeyboardEvent, charge: ChargeRow) {
         if (e.key !== "Enter" || e.ctrlKey || e.metaKey) return;
-        const isLast = charges[charges.length - 1]?.key === charge.key;
-        if (!isLast) return;                 // not last -> normal flow advances
         e.preventDefault();
-        e.stopPropagation();
-        addCharge();                         // adds row + focuses new picker (via addCharge's setTimeout)
+        e.stopImmediatePropagation();        // hard stop: no flow-root, no dialog
+        const isLast = charges[charges.length - 1]?.key === charge.key;
+        if (isLast) {
+            if (allChargesUsed) focusSave();   // nothing left to add -> go to Save
+            else addCharge();
+        } else {
+            // advance to the next charge row's picker manually
+            const idx = charges.findIndex((c) => c.key === charge.key);
+            const nextKey = charges[idx + 1]?.key;
+            setTimeout(() => {
+                const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-flow="charge"]'));
+                rows[idx + 1]?.focus();
+            }, 0);
+        }
     }
 
     // Enter after picking a ledger. For ROUND_OFF (no value field) chain/advance;
@@ -337,7 +368,6 @@
     function onChargePicked(charge: ChargeRow) {
         const kind = kindOf(charge);
         if (kind === "DISCOUNT") {
-            // Focus this row's value input to continue the flow.
             setTimeout(() => {
                 const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-flow="charge"]'));
                 const idx = charges.findIndex((c) => c.key === charge.key);
@@ -346,11 +376,12 @@
             }, 0);
             return;
         }
-        // ROUND_OFF (or any no-input kind): chain if last, else go to Save.
+        // No-value kind (ROUND_OFF / CGST / SGST): chain if ledgers remain, else Save.
         const isLast = charges[charges.length - 1]?.key === charge.key;
-        if (isLast) addCharge();
-        else setTimeout(() => document.querySelector<HTMLElement>('[data-flow="save"]')?.focus(), 0);
+        if (isLast && !allChargesUsed) addCharge();
+        else focusSave();
     }
+
 
 
     function removeCharge(key: number) {
@@ -582,7 +613,7 @@
             {@const kind = kindOf(c)}
             <div class="chrow">
                 <LedgerLookup flow="charge"
-                              options={chargeLedgers}
+                              options={optionsFor(c)}
                               value={c.ledgerId}
                               onselect={(id) => (c.ledgerId = id)}
                               onenter={() => onChargePicked(c)}

@@ -51,16 +51,13 @@
 
     function onKey(e: KeyboardEvent) {
         if (e.key === "Enter" && !open) {
-            // Nothing open: if a value is already chosen, advance the flow.
-            if (value != null) {
-                e.preventDefault();
-                onenter?.();
-            } else {
-                e.preventDefault();
-                onemptyenter?.();
-            }
+            e.preventDefault();
+            e.stopImmediatePropagation();     // don't let the flow root also act
+            if (value != null) onenter?.();
+            else onemptyenter?.();
             return;
         }
+
         if (!open) return;
         if (e.key === "ArrowDown") {
             active = Math.min(active + 1, filtered.length - 1);
@@ -70,6 +67,7 @@
             e.preventDefault();
         } else if (e.key === "Enter") {
             e.preventDefault();
+            e.stopImmediatePropagation();
             if (filtered[active]) pick(filtered[active]);
         } else if (e.key === "Escape") {
             open = false;
