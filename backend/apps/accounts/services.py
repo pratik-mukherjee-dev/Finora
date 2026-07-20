@@ -1,7 +1,7 @@
 from django.db import transaction
 from apps.ledgers.services import seed_default_ledgers
 from ..common.exceptions import LicenseError, DomainError
-from .models import Company, UserCompanySetting, License, User
+from .models import Company, UserCompanySetting, License, User, SettlementMode
 
 
 class AlreadyInitialized(Exception):
@@ -29,6 +29,7 @@ def register_first_user(username, password):
         is_mode_locked=True,
     )
     seed_default_ledgers(user)
+    seed_default_settlement_modes(user)
     return user
 
 
@@ -71,3 +72,56 @@ def set_segregation(user, enabled):
     setting.segregation_enabled = enabled
     setting.save(update_fields=["segregation_enabled"])
     return setting
+
+
+DEFAULT_SETTLEMENT_MODES = (
+    ("Cash", True),
+    ("UPI", False),
+    ("Bank Transfer", False),
+)
+
+@transaction.atomic
+def seed_default_settlement_modes(user):
+    """
+    Idempotent: create standard settlement modes if mising.
+    :param user:
+    :return: list of created settlement modes
+    """
+    created = []
+    for i, (name, is_system) in enumerate(DEFAULT_SETTLEMENT_MODES):
+        obj, was_created = SettlementMode.objects.get_or_create(
+            user=user,
+            name=name,
+            defaults={
+                "is_system": is_system,
+                "sort_order": i,
+                "created_by": user
+            }
+        )
+        if was_created:
+            created.append(obj)
+    return created
+
+
+@transaction.atomic
+def create_settlement_mode(user, name, sort_order=0):
+    name = name.strip()
+    if not name:
+        raise DomainError("Settlement mode name is required.")
+    return SettlementMode.objects.get_or_create(
+        user=user,
+        name=name,
+        is_systen=False,
+        sort_order=sort_order,
+        created_by=user,
+    )
+
+
+@transaction.atomic
+def delete_settlement_mode(user, mode_id):
+    mode = SettlementMode.objects.filter(user=user, pk=mode_id).first()
+    if not mode:
+        raise DomainError("Settlement mode not found.")
+    if mode.is_system:
+        raise DomainError("System settlement mode cannot be deleted.")
+    mode.delete()

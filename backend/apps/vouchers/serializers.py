@@ -103,19 +103,27 @@ class PurchaseSerializer(serializers.ModelSerializer):
 
 class ReceivedSerializer(serializers.ModelSerializer):
     party_name = serializers.CharField(source="party.name", read_only=True)
+    mode_name = serializers.CharField(source="mode.name", read_only=True, default=None)
 
     class Meta:
         model = Received
-        fields = ["id", "company", "party", "party_name", "number", "date", "amount", "is_cancelled"]
+        fields = [
+            "id", "company", "party", "party_name", "number",
+            "date", "amount", "mode", "mode_name", "is_cancelled"
+        ]
         read_only_fields = ["number", "is_cancelled"]
 
 
 class PaymentSerializer(serializers.ModelSerializer):
     party_name = serializers.CharField(source="party.name", read_only=True)
+    mode_name = serializers.CharField(source="mode.name", read_only=True, default=None)
 
     class Meta:
         model = Payment
-        fields = ["id", "company", "party", "party_name", "number", "date", "amount", "is_cancelled"]
+        fields = [
+            "id", "company", "party", "party_name", "number",
+            "date", "amount", "mode", "mode_name", "is_cancelled"
+        ]
         read_only_fields = ["number", "is_cancelled"]
 
 

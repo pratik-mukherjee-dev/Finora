@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser
+from apps.common.models import AuditModel
 
 
 class User(AbstractUser):
@@ -65,4 +66,35 @@ class UserCompanySetting(models.Model):
     )
     segregation_enabled = models.BooleanField(default=False)
     is_mode_locked = models.BooleanField(default=True)
+
+
+class SettlementMode(AuditModel):
+    """
+        User scoped payment/received method catalogue (Cash, UPI, etc...)
+        Seeded with system defaults at registration time; user may add more from settings
+        System rows can't be deleted (guarded in the service/view)
+    """
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="settlement_modes",
+    )
+
+    name = models.CharField(max_length=60)
+    is_system = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    sort_order =models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'name'],
+                name='unique_settlement_mode_per_user'
+            )
+        ]
+
+    def __str__(self):
+        return self.name
+
 

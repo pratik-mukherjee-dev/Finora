@@ -9,6 +9,12 @@ class Received(VoucherBase):
         "parties.Party", on_delete=models.PROTECT, related_name="receipts"
     )
     amount = models.DecimalField(max_digits=16, decimal_places=2)
+    mode = models.ForeignKey(
+        'accounts.SettlementMode',
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        related_name="receipts",
+    )
 
     class Meta(VoucherBase.Meta):
         constraints = [
@@ -24,6 +30,12 @@ class Payment(VoucherBase):
         "parties.Party", on_delete=models.PROTECT, related_name="payments"
     )
     amount = models.DecimalField(max_digits=16, decimal_places=2)
+    mode = models.ForeignKey(
+        'accounts.SettlementMode',
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        related_name="payments",
+    )
 
     class Meta(VoucherBase.Meta):
         constraints = [

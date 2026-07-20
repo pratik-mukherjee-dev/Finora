@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Company, UserCompanySetting, License
+from .models import Company, UserCompanySetting, License, SettlementMode
 
 
 class CompanySerializer(serializers.ModelSerializer):
@@ -22,3 +22,11 @@ class LicenseSerializer(serializers.ModelSerializer):
     class Meta:
         model = License
         fields = ["plan", "mode", "is_active", "valid_till", "allows_multi"]
+
+
+class SettlementModeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SettlementMode
+        fields = ['id', 'name', 'is_system', 'is_active', 'sort_order']
+        read_only_fields = ['is_system']
+

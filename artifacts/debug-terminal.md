@@ -1,34 +1,103 @@
-(.venv) PS E:\PyCharm\Services\Finora\desktop> npm run tauri dev
 
-> desktop@0.1.0 tauri
-> tauri dev
+(.venv) E:\PyCharm\Services\Finora\backend>python manage.py makemigrations
+E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\core\management\commands\makemigrations.py:160: RuntimeWarning: Got an error checking a consistent migration history performed for database connection 'default': connection timeout expired
+  warnings.warn(
+Migrations for 'accounts':
+  apps\accounts\migrations\0002_settlementmode.py
+    + Create model SettlementMode
+Migrations for 'vouchers':
+  apps\vouchers\migrations\0003_payment_mode_received_mode.py
+    + Add field mode to payment
+    + Add field mode to received
 
-     Running BeforeDevCommand (`npm run dev`)
+(.venv) E:\PyCharm\Services\Finora\backend>
+                                                                          
+(.venv) E:\PyCharm\Services\Finora\backend>python manage.py migrate       
+Traceback (most recent call last):
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\db\backends\base\base.py", line 278, in ensure_connection
+    self.connect()
+    ~~~~~~~~~~~~^^
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\utils\asyncio.py", line 26, in inner
+    return func(*args, **kwargs)
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\db\backends\base\base.py", line 255, in connect
+    self.connection = self.get_new_connection(conn_params)
+                      ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\utils\asyncio.py", line 26, in inner
+    return func(*args, **kwargs)
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\db\backends\postgresql\base.py", line 332, in get_new_connection
+    connection = self.Database.connect(**conn_params)
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\psycopg\connection.py", line 122, in connect
+    raise last_ex.with_traceback(None)
+psycopg.errors.ConnectionTimeout: connection timeout expired
 
-> desktop@0.1.0 dev
-> vite dev
+The above exception was the direct cause of the following exception:
 
+Traceback (most recent call last):
+  File "E:\PyCharm\Services\Finora\backend\manage.py", line 21, in <module>
+    main()
+    ~~~~^^
+  File "E:\PyCharm\Services\Finora\backend\manage.py", line 17, in main
+    execute_from_command_line(sys.argv)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\core\management\__init__.py", line 442, in execute_from_command_line
+    utility.execute()
+    ~~~~~~~~~~~~~~~^^
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\core\management\__init__.py", line 436, in execute
+    self.fetch_command(subcommand).run_from_argv(self.argv)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\core\management\base.py", line 413, in run_from_argv
+    self.execute(*args, **cmd_options)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\core\management\base.py", line 459, in execute
+    output = self.handle(*args, **options)
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\core\management\base.py", line 107, in wrapper
+    res = handle_func(*args, **kwargs)
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\core\management\commands\migrate.py", line 118, in handle
+    executor = MigrationExecutor(connection, self.migration_progress_callback)
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\db\migrations\executor.py", line 18, in __init__
+    self.loader = MigrationLoader(self.connection)
+                  ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\db\migrations\loader.py", line 58, in __init__
+    self.build_graph()
+    ~~~~~~~~~~~~~~~~^^
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\db\migrations\loader.py", line 235, in build_graph
+    self.applied_migrations = recorder.applied_migrations()
+                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\db\migrations\recorder.py", line 89, in applied_migrations
+    if self.has_table():
+       ~~~~~~~~~~~~~~^^
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\db\migrations\recorder.py", line 63, in has_table
+    with self.connection.cursor() as cursor:
+         ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\utils\asyncio.py", line 26, in inner
+    return func(*args, **kwargs)
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\db\backends\base\base.py", line 319, in cursor
+    return self._cursor()
+           ~~~~~~~~~~~~^^
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\db\backends\base\base.py", line 295, in _cursor
+    self.ensure_connection()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\utils\asyncio.py", line 26, in inner
+    return func(*args, **kwargs)
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\db\backends\base\base.py", line 277, in ensure_connection
+    with self.wrap_database_errors:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\db\utils.py", line 91, in __exit__
+    raise dj_exc_value.with_traceback(traceback) from exc_value
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\db\backends\base\base.py", line 278, in ensure_connection
+    self.connect()
+    ~~~~~~~~~~~~^^
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\utils\asyncio.py", line 26, in inner
+    return func(*args, **kwargs)
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\db\backends\base\base.py", line 255, in connect
+    self.connection = self.get_new_connection(conn_params)
+                      ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\utils\asyncio.py", line 26, in inner
+    return func(*args, **kwargs)
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\django\db\backends\postgresql\base.py", line 332, in get_new_connection
+    connection = self.Database.connect(**conn_params)
+  File "E:\PyCharm\Services\Finora\.venv\Lib\site-packages\psycopg\connection.py", line 122, in connect
+    raise last_ex.with_traceback(None)
+django.db.utils.OperationalError: connection timeout expired
 
-  VITE v6.4.3  ready in 1845 ms
-
-  ➜  Local:   http://localhost:1420/
-     Running DevCommand (`cargo  run --no-default-features --color always --`)
-        Info Watching E:\PyCharm\Services\Finora\desktop\src-tauri for changes...
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.24s
-     Running `target\debug\desktop.exe`
-waiting for server to start....2026-07-17 19:58:54.410 IST [13928] LOG:  starting PostgreSQL 18.4 on x86_64-windows, compiled by msvc-19.44.35227, 64-bit
-2026-07-17 19:58:54.425 IST [13928] LOG:  listening on IPv4 address "127.0.0.1", port 62903
-2026-07-17 19:58:54.849 IST [27380] LOG:  database system was shut down at 2026-07-17 19:57:51 IST
-2026-07-17 19:58:55.048 IST [13928] LOG:  database system is ready to accept connections
- done
-server started
-Finora backend ready on 127.0.0.1:62904
-WARNING:django.request:Unauthorized: /api/accounts/auth/me/
-C:\Users\death\AppData\Local\Temp\onefile_27096_897512_d21WFWjlEGQ\jwt\api_jwt.py:368: InsecureKeyLengthWarning: The HMAC key is 22 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
-C:\Users\death\AppData\Local\Temp\onefile_27096_897512_d21WFWjlEGQ\jwt\api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 22 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
-7:59:12 PM [vite-plugin-svelte] src/lib/components/shell/CommandPalette.svelte:59:8 Elements with the 'dialog' interactive role must have a tabindex value
-https://svelte.dev/e/a11y_interactive_supports_focus
-7:59:13 PM [vite-plugin-svelte] src/lib/components/shell/CommandPalette.svelte:59:8 Visible, non-interactive element `<div>` with a click event must be accompanied by a keyboard event handler. Consider whether an interactive element such as `<button type="button">` or `<a>` might be more appropriate
-https://svelte.dev/e/a11y_click_events_have_key_events
-7:59:13 PM [vite-plugin-svelte] src/lib/components/shell/CommandPalette.svelte:68:20 Non-interactive element `<li>` should not be assigned mouse or keyboard event listeners
-https://svelte.dev/e/a11y_no_noninteractive_element_interactions
+(.venv) E:\PyCharm\Services\Finora\backend>

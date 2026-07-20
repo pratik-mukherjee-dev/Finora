@@ -4,7 +4,7 @@ from rest_framework.response import Response
 
 from apps.common.exceptions import FinancialYearLocked, DomainError
 from apps.financialyear.selectors import active_fy
-from apps.accounts.models import Company
+from apps.accounts.models import Company, SettlementMode
 from apps.parties.models import Party
 from .models import (
     SaleMaster, SaleDerived, Purchase, Received, Payment,
@@ -25,6 +25,13 @@ def _context(request):
     company = Company.objects.get(user=request.user, pk=request.data["company"])
     party = Party.objects.get(user=request.user, pk=request.data["party"])
     return fy, company, party
+
+
+def _resolve_mode(request):
+    mode_id = request.data.get('mode')
+    if not mode_id:
+        return None
+    return SettlementMode.objects.filter(user=request.user, pk=mode_id).first()
 
 
 def _allocation_rows(settlement_type, settlement_id):
@@ -142,6 +149,7 @@ class ReceivedViewSet(
         r = services.create_received(
             request.user, company, fy, party, request.data["date"],
             request.data["amount"], number=request.data.get("number"),
+            mode=_resolve_mode(request)
         )
         data = self.get_serializer(r).data
         data["allocations"] = _allocation_rows("RECEIVED", r.id)
@@ -181,6 +189,7 @@ class PaymentViewSet(
         p = services.create_payment(
             request.user, company, fy, party, request.data["date"],
             request.data["amount"], number=request.data.get("number"),
+            mode=_resolve_mode(request)
         )
         data = self.get_serializer(p).data
         data["allocations"] = _allocation_rows("PAYMENT", p.id)

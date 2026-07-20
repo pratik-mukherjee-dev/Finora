@@ -2,12 +2,13 @@ from django.urls import path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from .auth_views import LogoutView, MeView, AuthStateView, RegisterView
-from .views import CompanyViewSet, SettingViewSet
+from .views import CompanyViewSet, SettingViewSet, SettlementModeViewSet
 
 
 router = DefaultRouter()
 router.register("companies", CompanyViewSet, basename="company")
 router.register("settings", SettingViewSet, basename="setting")
+router.register("settlement-modes", SettlementModeViewSet, basename="settlement-mode")
 urlpatterns = router.urls
 
 urlpatterns += [
