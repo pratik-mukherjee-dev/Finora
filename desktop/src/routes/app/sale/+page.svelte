@@ -17,6 +17,7 @@
         if (auth.needsFy) return void goto("/fy");
         void loadHistory();
         void loadLedgers();
+        void loadModes();
         if (charges.length === 0) charges = [newCharge()];   // default row for the enter-flow
         focusParty();
     });
@@ -54,6 +55,8 @@
         number: string; date: string; segregate: boolean; total_amount: number;
         is_cancelled: boolean; lines: SaleLine[]; derived: Derived[]; charges: SavedCharge[];
     };
+    // User-level settlement mode (Cash/UPI/…) for the optional inline settlement.
+    type SettlementMode = { id: number; name: string; is_system: boolean; is_active: boolean; sort_order: number; };
 
     let seq = 0;
     let chargeSeq = 0;
@@ -78,6 +81,12 @@
     let partyDialog = $state<string | null>(null);
     let itemDialog = $state<{ text: string; lineKey: number } | null>(null);
 
+    // ── optional inline settlement (creates a RECEIVED against THIS sale) ──────
+    let modes = $state<SettlementMode[]>([]);
+    let settleAmount = $state("0");
+    let settleModeId = $state<number | null>(null);
+    let settleNote = $state<string | null>(null);
+
     // ── charges: ledger catalogue + dynamic charge rows ───────────────────────
     let ledgers = $state<Ledger[]>([]);
     let charges = $state<ChargeRow[]>([]);
@@ -96,6 +105,10 @@
     // Charge ledgers we render in v1: discount + round-off only (TAX/OTHER = v2).
     const chargeLedgers = $derived(ledgers);
     const ledgerById = $derived(new Map(ledgers.map((l) => [l.id, l])));
+
+    // Inline-settlement helpers (independent of the charge ledgers above).
+    const modeOptions = $derived(modes.filter((m) => m.is_active).map((m) => ({id: m.id, name: m.name})));
+    const settleModeName = $derived(modes.find((m) => m.id === settleModeId)?.name ?? null);
 
     // Options for a given charge row: all charge ledgers minus those already
     // chosen in OTHER rows (keep this row's own pick so it still displays).
@@ -156,6 +169,23 @@
             lastLedgerCompany = companyId;
         } catch {
             ledgers = [];
+        }
+    }
+
+    // User-level settlement modes for the inline settlement picker.
+    async function loadModes() {
+        try {
+            const rows = await request<SettlementMode[] | { results?: SettlementMode[] }>(
+                "/api/accounts/settlement-modes/"
+            );
+            modes = Array.isArray(rows) ? rows : (rows?.results ?? []);
+            if (settleModeId == null) {
+                const active = modes.filter((m) => m.is_active);
+                const sys = active.find((m) => m.is_system);
+                settleModeId = sys?.id ?? active[0]?.id ?? null;
+            }
+        } catch {
+            modes = [];
         }
     }
 
@@ -453,6 +483,7 @@
         saving = true;
         error = null;
         saved = null;
+        settleNote = null;
         try {
             const payloadLines = lines.filter((l) => l.item && Number(l.qty) > 0).map((l) => {
                 const row: { item: number; qty: number; rate: number; company?: number } = {
@@ -475,11 +506,33 @@
                 }),
             });
             saved = res;
+
+            // Optional inline settlement — a SEPARATE, independent write. The sale
+            // is already saved; a settlement failure never rolls it back. Targets
+            // this sale only (target_bill_id), so it won't touch the party's other bills.
+            const amt = Number(settleAmount) || 0;
+            if (amt > 0) {
+                try {
+                    await request("/api/vouchers/received/", {
+                        method: "POST",
+                        body: JSON.stringify({
+                            company: companyId, party: party.id, date,
+                            amount: amt, mode: settleModeId, number: null,
+                            target_bill_id: res.id,
+                        }),
+                    });
+                    settleNote = `Settled ${amt.toFixed(2)} against #${res.number}${settleModeName ? ` via ${settleModeName}` : ""}.`;
+                } catch (se) {
+                    settleNote = `Sale #${res.number} saved, but the settlement did not post${se instanceof Error ? `: ${se.message}` : ""}. You can settle it later from the Settle page.`;
+                }
+            }
+
             editingId = null;
             party = null;
             segregate = false;
             lines = [newLine()];
             charges = [];
+            settleAmount = "0";
             await loadHistory();
             focusParty();
         } catch (e) {
@@ -687,6 +740,24 @@
             {saving ? "Saving…" : (editingId != null ? "Save changes" : "Save sale")} <kbd>Ctrl ⏎</kbd>
         </button>
     </footer>
+
+    <section class="settle-inline">
+        <div class="chhead"><span>Settlement (optional)</span></div>
+        <div class="settle-row">
+            <div class="field amt">
+                <label for="settle-amount">Amount</label>
+                <input id="settle-amount" class="num" type="number" min="0" step="0.01"
+                       bind:value={settleAmount} placeholder="0.00"/>
+            </div>
+            <div class="field mode">
+                <label for="settle-mode">Mode</label>
+                <LedgerLookup options={modeOptions} bind:value={settleModeId}
+                              placeholder="Settlement mode…" onselect={(id) => (settleModeId = id)}/>
+            </div>
+        </div>
+        <p class="settle-hint">Leave amount at 0 to save the sale without settling. Any amount here settles this sale only.</p>
+        {#if settleNote}<div class="settle-note">{settleNote}</div>{/if}
+    </section>
 </div>
 
 
@@ -700,7 +771,7 @@
 {#if confirmOpen}
     <ConfirmDialog
             title={editingId != null ? "Replace this sale?" : "Confirm sale"}
-            message={`Party: ${party?.name ?? "—"} · Final bill ${finalBill.toFixed(2)}. ${editingId != null ? "The original will be cancelled and replaced." : "Post this voucher?"}`}
+            message={`Party: ${party?.name ?? "—"} · Final bill ${finalBill.toFixed(2)}. ${editingId != null ? "The original will be cancelled and replaced." : "Post this voucher?"}${Number(settleAmount) > 0 ? ` Then settle ${Number(settleAmount).toFixed(2)}${settleModeName ? ` via ${settleModeName}` : ""} against it.` : ""}`}
             confirmLabel={editingId != null ? "Replace" : "Post sale"}
             busy={saving}
             onconfirm={confirmSave}
@@ -1173,5 +1244,50 @@
 
     .rt {
         text-align: right;
+    }
+    /* ── optional inline settlement (matches the charges section) ── */
+    .settle-inline {
+        margin-top: 14px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--bg-elevated);
+        padding: 8px 14px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-width: 560px;
+        margin-left: auto;
+    }
+
+    .settle-row {
+        display: flex;
+        gap: 14px;
+        align-items: flex-end;
+    }
+
+    .settle-row .field {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .settle-row .field.amt {
+        max-width: 180px;
+    }
+
+    .settle-hint {
+        margin: 0;
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+
+    .settle-note {
+        font-size: 12px;
+        color: #b9c6ff;
+        background: #1d2233;
+        border: 1px solid #34406b;
+        border-radius: var(--radius);
+        padding: 6px 10px;
     }
 </style>
