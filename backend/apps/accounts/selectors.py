@@ -1,8 +1,12 @@
-from .models import Company, UserCompanySetting
+from .models import UserCompanySetting, License
 
 
 def user_setting(user):
     return UserCompanySetting.objects.filter(user=user).select_related("default_company").first()
+
+
+def user_license(user):
+    return License.objects.filter(user=user).first()
 
 
 def default_company(user):

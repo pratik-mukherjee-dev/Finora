@@ -1,3 +1,6 @@
+/**
+ * desktop/src/lib/stores/auth.svelte.ts
+ */
 import {
     clearTokens,
     getRefresh,
@@ -18,6 +21,14 @@ type Setting = {
     is_mode_locked: boolean;
 };
 type Company = { id: number; name: string; is_default: boolean; created_at: string };
+type License = {
+    plan: string;
+    mode: Mode;
+    is_active: boolean;
+    valid_till: string | null;
+    allows_multi: boolean;
+    max_companies: number;
+};
 type FinancialYear = {
     id: number;
     start_date: string;
@@ -33,6 +44,7 @@ const COMPANY_KEY = "current_company";
 
 let user = $state<User | null>(null);
 let setting = $state<Setting | null>(null);
+let license = $state<License | null>(null);
 let companies = $state<Company[]>([]);
 let fy = $state<FinancialYear | null>(null);
 let currentCompanyId = $state<number | null>(null);
@@ -63,7 +75,9 @@ async function resolveCurrentCompany() {
 }
 
 async function loadContext() {
-    setting = await request<Setting>("/api/accounts/settings/");
+    const raw = await request<Setting & { license?: License }>("/api/accounts/settings/");
+    license = raw.license ?? null;
+    setting = raw;
     companies = await request<Company[]>("/api/accounts/companies/");
     const years = await request<FinancialYear[]>("/api/fy/");
     // Tolerate a paginated {results:[]} shape if DRF pagination is ever enabled.
@@ -80,6 +94,15 @@ export const auth = {
     },
     get setting() {
         return setting;
+    },
+    get license() {
+        return license;
+    },
+    get allowsMulti() {
+        return license?.allows_multi ?? false;
+    },
+    get maxCompanies() {
+        return license?.max_companies ?? 1;
     },
     get companies() {
         return companies;
@@ -158,6 +181,7 @@ export const auth = {
         await persist(COMPANY_KEY, null);
         user = null;
         setting = null;
+        license = null;
         companies = [];
         fy = null;
         currentCompanyId = null;
@@ -168,6 +192,25 @@ export const auth = {
             method: "POST",
             body: JSON.stringify({segregation_enabled: segregation}),
         });
+        await loadContext();
+    },
+
+    async switchToSingle() {
+        setting = await request<Setting>("/api/accounts/settings/switch_single/", {
+            method: "POST",
+        });
+        await loadContext();
+    },
+
+    async setSegregation(enabled: boolean) {
+        setting = await request<Setting>("/api/accounts/settings/segregation/", {
+            method: "POST",
+            body: JSON.stringify({enabled}),
+        });
+    },
+
+    async reloadContext() {
+        await loadContext();
     },
 
     async createCompany(name: string, isDefault: boolean) {

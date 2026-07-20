@@ -42,6 +42,11 @@ def create_company(user, name, make_default=False):
         and user.companies.exists()
     ):
         raise LicenseError("Single-company mode allows only one company.")
+
+    lic = License.objects.filter(user=user).first()
+    if lic and user.companies.count() >= lic.max_companies:
+        raise LicenseError(f"Your license allows a maximum of {lic.max_companies} companies.")
+
     if make_default:
         Company.objects.filter(user=user, is_default=True).update(is_default=False)
     company = Company.objects.create(user=user, name=name, is_default=make_default)
@@ -61,6 +66,17 @@ def switch_to_multi(user, segregation_enabled=False):
     setting.segregation_enabled = segregation_enabled
     setting.is_mode_locked = True
     setting.save()
+    return setting
+
+
+@transaction.atomic
+def switch_to_single(user):
+    setting = UserCompanySetting.objects.select_for_update().get(user=user)
+    setting.active_mode = UserCompanySetting.SINGLE
+    setting.segregation_enabled = False
+    setting.save(
+        update_fields=["active_mode", "segregation_enabled"]
+    )
     return setting
 
 

@@ -40,6 +40,7 @@ class License(models.Model):
     mode = models.CharField(max_length=10, choices=MODE_CHOICES, default=SINGLE)
     is_active = models.BooleanField(default=True)
     valid_till = models.DateField(null=True, blank=True)
+    max_companies = models.PositiveSmallIntegerField(default=1)
 
     class Meta:
         constraints = [

@@ -21,7 +21,7 @@ class LicenseSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = License
-        fields = ["plan", "mode", "is_active", "valid_till", "allows_multi"]
+        fields = ["plan", "mode", "is_active", "valid_till", "allows_multi", "max_companies"]
 
 
 class SettlementModeSerializer(serializers.ModelSerializer):

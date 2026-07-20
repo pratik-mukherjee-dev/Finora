@@ -1,11 +1,9 @@
-from operator import is_not
-
 from rest_framework import viewsets, mixins
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from .models import Company, SettlementMode
-from .serializers import CompanySerializer, UserCompanySettingSerializer, SettlementModeSerializer
+from .serializers import CompanySerializer, UserCompanySettingSerializer, SettlementModeSerializer, LicenseSerializer
 from . import services, selectors
 
 
@@ -25,14 +23,22 @@ class CompanyViewSet(viewsets.ModelViewSet):
 
 class SettingViewSet(viewsets.ViewSet):
     def list(self, request):
-        s = selectors.user_setting(request.user)
-        return Response(UserCompanySettingSerializer(s).data if s else {})
+        setting = selectors.user_setting(request.user)
+        lic = selectors.user_license(request.user)
+        data = UserCompanySettingSerializer(setting).data if setting else None
+        data["license"] = LicenseSerializer(lic).data if lic else None
+        return Response(data)
 
     @action(detail=False, methods=["post"])
     def switch_multi(self, request):
         s = services.switch_to_multi(
             request.user, request.data.get("segregation_enabled", False)
         )
+        return Response(UserCompanySettingSerializer(s).data)
+
+    @action(detail=False, methods=["post"])
+    def switch_single(self, request):
+        s = services.switch_to_single(request.user)
         return Response(UserCompanySettingSerializer(s).data)
 
     @action(detail=False, methods=["post"])
