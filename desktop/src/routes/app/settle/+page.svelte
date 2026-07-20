@@ -1,11 +1,12 @@
 <script lang="ts">
     import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
-    import { enterFlow } from "$lib/flow";
+    import {enterFlow} from "$lib/flow";
     import {auth} from "$lib/stores/auth.svelte";
     import {goto} from "$app/navigation";
     import {onMount} from "svelte";
     import {request, type Suggestion} from "$lib/api";
     import SmartLookup from "$lib/components/SmartLookup.svelte";
+    import LedgerLookup from "$lib/components/LedgerLookup.svelte";
     import PartyCreateDialog from "$lib/components/PartyCreateDialog.svelte";
     import {registerScreen} from "$lib/shell/useScreen.svelte";
 
@@ -13,6 +14,7 @@
         if (!auth.isAuthed) return void goto("/login");
         if (auth.needsSetup) return void goto("/setup");
         if (auth.needsFy) return void goto("/fy");
+        void loadModes();
         void loadHistory();
     });
 
@@ -31,6 +33,9 @@
         date: string; total: number; settled: number; open: number;
     };
     type OpenBills = { outstanding_total: number; bills: OpenBill[] };
+    type SettlementMode = {
+        id: number; name: string; is_system: boolean; is_active: boolean; sort_order: number;
+    };
 
     const today = new Date().toISOString().slice(0, 10);
     let kind = $state<Kind>("PAYMENT");
@@ -46,12 +51,15 @@
     let preview = $state<OpenBills | null>(null);
     let loadingPreview = $state(false);
     let partyDialog = $state<string | null>(null);
+    let modes = $state<SettlementMode[]>([]);
+    let modeId = $state<number | null>(null);
 
     const companyId = $derived(auth.currentCompany?.id ?? null);
     const endpoint = $derived(kind === "PAYMENT" ? "/api/vouchers/payments/" : "/api/vouchers/received/");
     const canSave = $derived(!!party && !!companyId && Number(amount) > 0 && !saving);
     const allocated = $derived((result?.allocations ?? []).reduce((s, a) => s + (Number(a.amount) || 0), 0));
     const unallocated = $derived(result ? Math.max(0, (Number(result.amount) || 0) - allocated) : 0);
+    const modeOptions = $derived(modes.filter((m) => m.is_active).map((m) => ({id: m.id, name: m.name})));
 
     let confirmOpen = $state(false);
 
@@ -79,10 +87,14 @@
 
     const flowOpts = $derived({
         // Ctrl+Enter on a complete form: save directly, no dialog.
-        onSave: (_opts: { direct: boolean }) => { if (canSave) void save(); },
+        onSave: (_opts: { direct: boolean }) => {
+            if (canSave) void save();
+        },
         isComplete,
         // Plain Enter at the end always opens the confirm dialog.
-        onConfirm: () => { confirmOpen = true; },
+        onConfirm: () => {
+            confirmOpen = true;
+        },
     });
 
     // Live preview: how much of `amount` will settle which open bills (oldest->latest).
@@ -121,6 +133,27 @@
         selectedId = null;
         void loadHistory();
         void loadPreview();
+    }
+
+    // User-level settlement modes (Cash/UPI/…). Loaded once; shared by both kinds.
+    async function loadModes() {
+        try {
+            const rows = await request<SettlementMode[] | { results?: SettlementMode[] }>(
+                "/api/accounts/settlement-modes/"
+            );
+            modes = Array.isArray(rows) ? rows : (rows?.results ?? []);
+            if (modeId == null) {
+                const active = modes.filter((m) => m.is_active);
+                const sys = active.find((m) => m.is_system);
+                modeId = sys?.id ?? active[0]?.id ?? null;
+            }
+        } catch {
+            modes = [];
+        }
+    }
+
+    function onModeSelect(id: number) {
+        modeId = id;
     }
 
     async function loadHistory() {
@@ -177,7 +210,14 @@
         try {
             const res = await request<SettleResult>(endpoint, {
                 method: "POST",
-                body: JSON.stringify({company: companyId, party: party.id, date, amount: Number(amount), number: null}),
+                body: JSON.stringify({
+                    company: companyId,
+                    party: party.id,
+                    date,
+                    amount: Number(amount),
+                    mode: modeId,
+                    number: null
+                }),
             });
             result = {id: res.id, number: res.number, amount: Number(res.amount), allocations: res.allocations ?? []};
             amount = "0";
@@ -196,9 +236,7 @@
         actions: [
             {id: "set-save", label: "Save", icon: "✓", shortcut: "Ctrl+Enter", run: requestSave},
         ],
-        shortcuts: [
-
-        ],
+        shortcuts: [],
         panel: [
             {id: "allocation", title: "Allocation", body: allocationPanel},
             {id: "history", title: "History", body: historyPanel},
@@ -218,7 +256,9 @@
                     <span class="rt">{Number(a.amount).toFixed(2)}</span></div>
             {/each}
             <div class="sumline"><span>Allocated</span><strong>{allocated.toFixed(2)}</strong></div>
-            {#if unallocated > 0}<div class="sumline adv"><span>On account</span><strong>{unallocated.toFixed(2)}</strong></div>{/if}
+            {#if unallocated > 0}
+                <div class="sumline adv"><span>On account</span><strong>{unallocated.toFixed(2)}</strong></div>
+            {/if}
         {/if}
     {:else if !party}
         <p class="muted">Pick a party to preview open {kind === "PAYMENT" ? "purchases" : "sales"}.</p>
@@ -251,7 +291,8 @@
             {#each history as v (v.id)}
                 <li class:cancelled={v.is_cancelled} class:active={v.id === selectedId}>
                     <button class="hrow-btn" onclick={() => viewVoucher(v)}>
-                        <div class="hline1"><span>#{v.number}</span><span class="htot">{Number(v.amount).toFixed(2)}</span></div>
+                        <div class="hline1"><span>#{v.number}</span><span
+                                class="htot">{Number(v.amount).toFixed(2)}</span></div>
                         <div class="hline2"><span>{v.party_name}</span><span>{v.date}</span></div>
                         {#if v.is_cancelled}<span class="badge">cancelled</span>{/if}
                     </button>
@@ -270,41 +311,50 @@
         ? "Pay a vendor. Auto-settles open purchases oldest → latest."
         : "Receive from a customer. Auto-settles open sales oldest → latest."}</p>
 
-    {#if error}<div class="banner err">{error}</div>{/if}
+    {#if error}
+        <div class="banner err">{error}</div>
+    {/if}
 
     <section class="head">
         <div class="field">
             <label for="party">Party</label>
-            <SmartLookup type="PARTY" flow="party" placeholder="Search or create party…" value={party}
-                         onselect={onPartySelect} oncreate={onPartyCreate}/>
+            <SmartLookup flow="party" oncreate={onPartyCreate} onselect={onPartySelect} placeholder="Search or create party…"
+                         type="PARTY" value={party}/>
         </div>
         <div class="field amt">
             <label for="amount">Amount</label>
-            <input id="amount" class="num" type="number" min="0" step="0.01" data-flow="amount" bind:value={amount}/>
+            <input bind:value={amount} class="num" data-flow="amount" id="amount" min="0" step="0.01" type="number"/>
+        </div>
+        <div class="field mode">
+            <label for="mode">Mode</label>
+            <LedgerLookup bind:value={modeId} flow="mode" onselect={onModeSelect} options={modeOptions}
+                          placeholder="Settlement mode…"/>
         </div>
         <div class="field date">
             <label for="date">Date</label>
-            <input id="date" type="date" data-flow="date" bind:value={date}/>
+            <input bind:value={date} data-flow="date" id="date" type="date"/>
         </div>
     </section>
 
     <footer class="foot">
-        <button class="save" type="button" data-flow="save" disabled={!canSave} onclick={requestSave}>
+        <button class="save" data-flow="save" disabled={!canSave} onclick={requestSave} type="button">
             {saving ? "Saving…" : `Save ${kind === "PAYMENT" ? "payment" : "receipt"}`} <kbd>Ctrl ⏎</kbd>
         </button>
     </footer>
 </div>
 
 {#if partyDialog !== null}
-    <PartyCreateDialog initialName={partyDialog} oncreated={onPartyCreated} oncancel={() => (partyDialog = null)}/>{/if}
+    <PartyCreateDialog initialName={partyDialog} oncreated={onPartyCreated} oncancel={() => (partyDialog = null)}/>
+{/if}
 {#if confirmOpen}
     <ConfirmDialog
-        title={kind === "PAYMENT" ? "Confirm payment" : "Confirm receipt"}
-        message={`Party: ${party?.name ?? "—"} · Amount ${Number(amount).toFixed(2)}. Auto-settle oldest → latest?`}
-        confirmLabel={kind === "PAYMENT" ? "Post payment" : "Post receipt"}
-        busy={saving}
-        onconfirm={confirmSave}
-        oncancel={closeConfirm}/>{/if}
+            title={kind === "PAYMENT" ? "Confirm payment" : "Confirm receipt"}
+            message={`Party: ${party?.name ?? "—"} · Amount ${Number(amount).toFixed(2)}. Auto-settle oldest → latest?`}
+            confirmLabel={kind === "PAYMENT" ? "Post payment" : "Post receipt"}
+            busy={saving}
+            onconfirm={confirmSave}
+            oncancel={closeConfirm}/>
+{/if}
 
 <style>
     .wrap {
@@ -374,6 +424,10 @@
     }
 
     .field.amt {
+        max-width: 200px;
+    }
+
+    .field.mode {
         max-width: 200px;
     }
 

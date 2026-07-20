@@ -34,6 +34,13 @@ def _resolve_mode(request):
     return SettlementMode.objects.filter(user=request.user, pk=mode_id).first()
 
 
+def _resolve_target_bill(request):
+    """Optional: settle only this specific bill (inline sale/purchase
+    settlement). None -> auto-allocate oldest->latest (Settle page)."""
+    bill_id = request.data.get("target_bill_id")
+    return bill_id if bill_id else None
+
+
 def _allocation_rows(settlement_type, settlement_id):
     """Allocations for a settlement, enriched with each bill's number/date."""
     allocs = Allocation.objects.filter(
@@ -149,7 +156,8 @@ class ReceivedViewSet(
         r = services.create_received(
             request.user, company, fy, party, request.data["date"],
             request.data["amount"], number=request.data.get("number"),
-            mode=_resolve_mode(request)
+            mode=_resolve_mode(request),
+            target_bill_id=_resolve_target_bill(request),
         )
         data = self.get_serializer(r).data
         data["allocations"] = _allocation_rows("RECEIVED", r.id)
@@ -189,7 +197,8 @@ class PaymentViewSet(
         p = services.create_payment(
             request.user, company, fy, party, request.data["date"],
             request.data["amount"], number=request.data.get("number"),
-            mode=_resolve_mode(request)
+            mode=_resolve_mode(request),
+            target_bill_id=_resolve_target_bill(request),
         )
         data = self.get_serializer(p).data
         data["allocations"] = _allocation_rows("PAYMENT", p.id)
