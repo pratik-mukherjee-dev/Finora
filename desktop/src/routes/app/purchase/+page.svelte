@@ -8,6 +8,8 @@
     import PartyCreateDialog from "$lib/components/PartyCreateDialog.svelte";
     import ItemCreateDialog from "$lib/components/ItemCreateDialog.svelte";
     import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+    import WarningDialog from "$lib/components/WarningDialog.svelte";
+    import type {Issue} from "$lib/validation";
     import LedgerLookup from "$lib/components/LedgerLookup.svelte";
     import {registerScreen} from "$lib/shell/useScreen.svelte";
 
@@ -92,6 +94,8 @@
 
     // ── enter-flow / confirm state ────────────────────────────────────────────
     let confirmOpen = $state(false);
+    let warningIssues = $state<Issue[] | null>(null);
+    let warningNext = $state<(() => void) | null>(null);
     let partyLookup = $state<{ focus: () => void } | null>(null);
 
     const companyId = $derived(auth.currentCompany?.id ?? null);
@@ -326,6 +330,12 @@
         }
     }
 
+    function excludeItems(lineKey: number): Set<number> {
+        return new Set(
+            lines.filter((l) => l.key !== lineKey && l.item != null).map((l) => l.item!.id)
+        );
+    }
+
     function addLine() {
         lines = [...lines, newLine()];
     }
@@ -363,9 +373,11 @@
 
     // ── charge row management ─────────────────────────────────────────────────
     function addCharge() {
-        const used = new Set(charges.map((c) => c.ledgerId));
-        const first = chargeLedgers.find((l) => !used.has(l.id)) ?? chargeLedgers[0] ?? null;
-        charges = [...charges, newCharge(first?.id ?? null)];
+        // Default the picker to the first unused charge ledger, if any.
+        // const used = new Set(charges.map((c) => c.ledgerId));
+        // const first = chargeLedgers.find((l) => !used.has(l.id)) ?? chargeLedgers[0] ?? null;
+        // charges = [...charges, newCharge(first?.id ?? null)];
+        charges = [...charges, newCharge()];
         setTimeout(() => {
             const rows = document.querySelectorAll<HTMLElement>('[data-flow="charge"]');
             rows[rows.length - 1]?.focus();
@@ -455,23 +467,127 @@
         return lines.every((l) => !l.item || (l.mapping != null && Number(l.qty) > 0));
     }
 
-    const flowOpts = $derived({
-        // Ctrl+Enter on a complete form: save directly, no dialog.
-        onSave: (_opts: { direct: boolean }) => {
-            if (canSave) void save();
-        },
-        isComplete,
-        // Plain Enter at the end always opens the confirm dialog.
-        onConfirm: () => {
+    // ── pre-save validation (soft warnings, not hard blocks) ──────────────────
+    function collectIssues(): Issue[] {
+        const issues: Issue[] = [];
+        const growRows = () => Array.from(document.querySelectorAll<HTMLElement>(".grow"));
+
+        lines.forEach((l, i) => {
+            const isLastLine = i === lines.length - 1;
+            const isPristine = l.item === null && l.qty === "1" && Number(l.rate) === 0 && Number(l.amount) === 0;
+            if (l.item === null && !(isLastLine && isPristine)) {
+                issues.push({
+                    code: `line-${i}-no-item`,
+                    message: `Line ${i+1}: item was typed but not selected or created - this line will be skipped`,
+                    severity: "block",
+                    focus: () => {
+                        growRows()[i]?.querySelector<HTMLElement>('[data-flow="item"]')?.focus();
+                    },
+                });
+                return
+            }
+            if (!l.item) return;
+            if (l.noMapping) {
+                issues.push({
+                    code: `line-${i}-no-mapping`,
+                    message: `Line ${i + 1} (${l.item.name}): no item-company mapping — line will be skipped.`,
+                    severity: "block",
+                    focus: () => { growRows()[i]?.querySelector<HTMLElement>('[data-flow="item"]')?.focus(); },
+                });
+            }
+            if (Number(l.qty) <= 0) {
+                issues.push({
+                    code: `line-${i}-qty-zero`,
+                    message: `Line ${i + 1} (${l.item.name}): quantity is 0.`,
+                    focus: () => { const el = growRows()[i]?.querySelector<HTMLInputElement>('[data-flow="qty"]'); el?.focus(); el?.select(); },
+                });
+            }
+            if (Number(l.rate) <= 0) {
+                issues.push({
+                    code: `line-${i}-rate-zero`,
+                    message: `Line ${i + 1} (${l.item.name}): rate is 0.`,
+                    focus: () => { const el = growRows()[i]?.querySelector<HTMLInputElement>('[data-flow="rate"]'); el?.focus(); el?.select(); },
+                });
+            }
+        });
+
+        charges.forEach((c, i) => {
+            if (c.ledgerId == null) return;
+            const kind = kindOf(c);
+            if (kind === "DISCOUNT" && (Number(c.value) || 0) <= 0) {
+                const name = ledgerById.get(c.ledgerId)?.name ?? "Charge";
+                issues.push({
+                    code: `charge-${i}-value-zero`,
+                    message: `${name} discount value is 0 — it will have no effect.`,
+                    focus: () => {
+                        const rows = Array.from(document.querySelectorAll<HTMLElement>(".chrow"));
+                        rows[i]?.querySelector<HTMLInputElement>('[data-flow="charge-val"]')?.focus();
+                    },
+                });
+            }
+        });
+
+        const amt = Number(settleAmount) || 0;
+        if (amt > 0 && settleModeId == null) {
+            issues.push({
+                code: "settle-no-mode",
+                message: "Settlement amount entered but no mode selected.",
+                focus: () => document.getElementById("settle-amount")?.focus(),
+            });
+        }
+        if (amt > 0 && finalBill > 0 && amt > finalBill) {
+            issues.push({
+                code: "settle-overpay",
+                message: `Settlement amount (${amt.toFixed(2)}) exceeds the bill total (${finalBill.toFixed(2)}). The excess will remain as an advance on account.`,
+                focus: () => { const el = document.getElementById("settle-amount") as HTMLInputElement | null; el?.focus(); el?.select(); },
+            });
+        }
+
+        return issues;
+    }
+
+    // ── save flow: warning → confirm → save ───────────────────────────────────
+    function attemptSave(via: "confirm" | "direct") {
+        if (!canSave) return;
+        const issues = collectIssues();
+        if (issues.length > 0) {
+            warningIssues = issues;
+            warningNext = via === "confirm" ? () => { confirmOpen = true; } : () => { void save(); };
+        } else if (via === "confirm") {
             confirmOpen = true;
-        },
+        } else {
+            void save();
+        }
+    }
+
+    function closeWarning() {
+        warningIssues = null;
+        warningNext = null;
+        focusParty();
+    }
+
+    function reviewWarning() {
+        const first = warningIssues?.[0];
+        warningIssues = null;
+        warningNext = null;
+        first?.focus();
+    }
+
+    function proceedWarning() {
+        const next = warningNext;
+        warningIssues = null;
+        warningNext = null;
+        next?.();
+    }
+
+    const flowOpts = $derived({
+        onSave: (_opts: { direct: boolean }) => { attemptSave("direct"); },
+        isComplete,
+        onConfirm: () => { attemptSave("confirm"); },
     });
 
-
-    // ── save via confirmation ─────────────────────────────────────────────────
     function requestSave() {
-        if (!canSave) return;
-        confirmOpen = true;
+        attemptSave("confirm");
     }
 
     async function confirmSave() {
@@ -481,7 +597,7 @@
 
     function closeConfirm() {
         confirmOpen = false;
-        focusParty();          // return focus into the flow so shortcuts keep working
+        focusParty();
     }
 
     function buildPayloadCharges() {
@@ -634,6 +750,7 @@
                     <SmartLookup type="ITEM" flow="item"
                                  placeholder="Search or create item ..."
                                  value={line.item}
+                                 exclude={excludeItems(line.key)}
                                  onselect={(s) => onItemSelect(line, s)}
                                  oncreate={(t) => onItemCreate(line, t)}
                                  onemptyenter={() => onLineEmptyEnter(line)}
@@ -746,6 +863,12 @@
 {#if itemDialog !== null && companyId}
     <ItemCreateDialog initialName={itemDialog.text} companyId={companyId} oncreated={onItemCreated}
                       oncancel={() => (itemDialog = null)}/>
+{/if}
+{#if warningIssues}
+    <WarningDialog issues={warningIssues}
+                   onreview={reviewWarning}
+                   onproceed={proceedWarning}
+                   oncancel={closeWarning}/>
 {/if}
 {#if confirmOpen}
     <ConfirmDialog

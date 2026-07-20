@@ -1,5 +1,7 @@
 <script lang="ts">
     import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+    import WarningDialog from "$lib/components/WarningDialog.svelte";
+    import type {Issue} from "$lib/validation";
     import {enterFlow} from "$lib/flow";
     import {auth} from "$lib/stores/auth.svelte";
     import {goto} from "$app/navigation";
@@ -62,15 +64,75 @@
     const modeOptions = $derived(modes.filter((m) => m.is_active).map((m) => ({id: m.id, name: m.name})));
 
     let confirmOpen = $state(false);
+    let warningIssues = $state<Issue[] | null>(null);
+    let warningNext = $state<(() => void) | null>(null);
 
     // Party, positive amount, and a date are the potential fields.
     function isComplete(): boolean {
         return !!party && !!companyId && Number(amount) > 0 && !!date;
     }
 
-    function requestSave() {
+    // ── pre-save validation (soft warnings, not hard blocks) ──────────────────
+    function collectIssues(): Issue[] {
+        const issues: Issue[] = [];
+        const amt = Number(amount) || 0;
+
+        if (amt > 0 && modeId == null) {
+            issues.push({
+                code: "settle-no-mode",
+                message: "No settlement mode selected.",
+                focus: () => document.getElementById("amount")?.focus(),
+            });
+        }
+
+        const outstanding = Number(preview?.outstanding_total ?? 0);
+        if (amt > 0 && outstanding > 0 && amt > outstanding) {
+            issues.push({
+                code: "settle-overpay",
+                message: `Amount (${amt.toFixed(2)}) exceeds the outstanding total (${outstanding.toFixed(2)}). The excess will remain as an advance on account.`,
+                focus: () => { const el = document.getElementById("amount") as HTMLInputElement | null; el?.focus(); el?.select(); },
+            });
+        }
+
+        return issues;
+    }
+
+    // ── save flow: warning → confirm → save ───────────────────────────────────
+    function attemptSave(via: "confirm" | "direct") {
         if (!canSave) return;
-        confirmOpen = true;
+        const issues = collectIssues();
+        if (issues.length > 0) {
+            warningIssues = issues;
+            warningNext = via === "confirm" ? () => { confirmOpen = true; } : () => { void save(); };
+        } else if (via === "confirm") {
+            confirmOpen = true;
+        } else {
+            void save();
+        }
+    }
+
+    function closeWarning() {
+        warningIssues = null;
+        warningNext = null;
+        setTimeout(() => (document.getElementById("amount") as HTMLElement | null)?.focus(), 0);
+    }
+
+    function reviewWarning() {
+        const first = warningIssues?.[0];
+        warningIssues = null;
+        warningNext = null;
+        first?.focus();
+    }
+
+    function proceedWarning() {
+        const next = warningNext;
+        warningIssues = null;
+        warningNext = null;
+        next?.();
+    }
+
+    function requestSave() {
+        attemptSave("confirm");
     }
 
     async function confirmSave() {
@@ -80,21 +142,14 @@
 
     function closeConfirm() {
         confirmOpen = false;
-        // return focus into the flow so shortcuts keep working
         setTimeout(() => (document.getElementById("amount") as HTMLElement | null)?.focus(), 0);
     }
 
 
     const flowOpts = $derived({
-        // Ctrl+Enter on a complete form: save directly, no dialog.
-        onSave: (_opts: { direct: boolean }) => {
-            if (canSave) void save();
-        },
+        onSave: (_opts: { direct: boolean }) => { attemptSave("direct"); },
         isComplete,
-        // Plain Enter at the end always opens the confirm dialog.
-        onConfirm: () => {
-            confirmOpen = true;
-        },
+        onConfirm: () => { attemptSave("confirm"); },
     });
 
     // Live preview: how much of `amount` will settle which open bills (oldest->latest).
@@ -345,6 +400,12 @@
 
 {#if partyDialog !== null}
     <PartyCreateDialog initialName={partyDialog} oncreated={onPartyCreated} oncancel={() => (partyDialog = null)}/>
+{/if}
+{#if warningIssues}
+    <WarningDialog issues={warningIssues}
+                   onreview={reviewWarning}
+                   onproceed={proceedWarning}
+                   oncancel={closeWarning}/>
 {/if}
 {#if confirmOpen}
     <ConfirmDialog

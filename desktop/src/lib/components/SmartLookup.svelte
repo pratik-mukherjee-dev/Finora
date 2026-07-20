@@ -10,8 +10,9 @@
         oncreate: (typed: string) => void;
         onenter?: () => void;              // fired when Enter pressed on an already-resolved value
         onemptyenter?: () => void;        // Enter pressed with no value + menu closed
+        exclude?: Set<number>;
     };
-    let {type, placeholder = "", value = $bindable(null), flow, onselect, oncreate, onenter, onemptyenter}: Props = $props();
+    let {type, placeholder = "", value = $bindable(null), exclude = new Set(), flow, onselect, oncreate, onenter, onemptyenter}: Props = $props();
 
     let inputEl: HTMLInputElement | null = $state(null);
     export function focus() {
@@ -44,7 +45,8 @@
         controller = new AbortController();
         loading = true;
         try {
-            results = await suggest(type, term, 10, controller.signal);
+            const raw = await suggest(type, term, 10, controller.signal);
+            results = raw.filter((r) => !exclude.has(r.id))
             active = 0;
             open = true;
         } catch (e) {
