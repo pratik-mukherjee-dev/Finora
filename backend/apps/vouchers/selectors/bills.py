@@ -37,17 +37,28 @@ def open_purchases(party):
 
 def open_bills_preview(party, kind):
     """
-    Read-only dry-run for the settlement UI. `kind` is the settlement kind:
-      RECEIVED -> settles open SALES
-      PAYMENT  -> settles open PURCHASES
-    Returns rich rows (number, date, total, settled, open) + outstanding total.
+        Read-only dry-run for the settlement UI. `kind` is the settlement kind:
+          RECEIVED -> settles open SALES
+          PAYMENT  -> settles open PURCHASES
+        Returns rich rows + outstanding total + ledger balance + on_account.
+
+        Accounting identity:
+          RECEIVED:  balance = outstanding - on_account   (positive = receivable)
+          PAYMENT:  -balance = outstanding - on_account   (negative = payable)
     """
+    from apps.parties.selectors import current_balance
+
     if kind == "RECEIVED":
         bill_type, pairs = "SALE", open_sales(party)
     elif kind == "PAYMENT":
         bill_type, pairs = "PURCHASE", open_purchases(party)
     else:
-        return {"outstanding_total": Decimal("0.00"), "bills": []}
+        return {
+            "outstanding_total": Decimal("0.00"),
+            "balance": Decimal("0.00"),
+            "on_account": Decimal("0.00"),
+            "bills": []
+        }
 
     rows = []
     total = Decimal("0.00")
@@ -63,4 +74,19 @@ def open_bills_preview(party, kind):
             "settled": settled,
             "open": pending,
         })
-    return {"outstanding_total": total, "bills": rows}
+
+    bal = current_balance(party)
+    # on_account = how much receipt/payment money is sitting unallocated.
+    # For RECEIVED: bal is positive (receivable). on_account = outstanding - bal
+    # For PAYMENT:  bal is negative (payable).   on_account = outstanding - abs(bal)
+    if kind == "RECEIVED":
+        on_account = max(total - bal, Decimal("0.00"))
+    else:
+        on_account = max(total - abs(bal), Decimal("0.00"))
+
+    return {
+        "outstanding_total": total,
+        "balance": bal,
+        "on_account": on_account,
+        "bills": rows
+    }

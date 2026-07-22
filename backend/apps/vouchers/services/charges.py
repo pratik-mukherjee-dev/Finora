@@ -14,7 +14,7 @@ CHARGE_ORDER = {
 }
 
 
-def tally_default_round(value, precision=0.01):
+def tally_default_round(value, precision=1):
     getcontext().prec = 12
     value = Decimal(str(value))
     step = Decimal(str(precision))

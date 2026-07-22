@@ -44,6 +44,7 @@
     let ledger = $state<LedgerEntry[]>([]);
     let ledgerLoading = $state(false);
     let ledgerFilter = $state<string>("ALL");
+    let partyOutstanding = $state<{ outstanding: number; on_account: number } | null>(null);
     let error = $state<string | null>(null);
 
     // create dialog
@@ -110,11 +111,31 @@
         }
     }
 
+    async function loadOutstanding(partyId: number) {
+        try {
+            const [recv, pay] = await Promise.all([
+                request<{ outstanding_total: number; on_account: number }>(
+                    `/api/vouchers/received/open_bills/?party=${partyId}`
+                ),
+                request<{ outstanding_total: number; on_account: number }>(
+                    `/api/vouchers/payments/open_bills/?party=${partyId}`
+                ),
+            ]);
+            partyOutstanding = {
+                outstanding: Number(recv.outstanding_total) - Number(pay.outstanding_total),
+                on_account: Number(recv.on_account) + Number(pay.on_account),
+            };
+        } catch {
+            partyOutstanding = null;
+        }
+    }
+
     function selectParty(p: Party) {
         selectedId = p.id;
         ledgerFilter = "ALL";
         startEdit(p);
         void loadLedger(p.id);
+        void loadOutstanding(p.id);
         shell.activeTab = "ledger";
     }
 
@@ -235,18 +256,34 @@
             </button>
         </div>
         <div class="bal-summary">
-            <span>Balance:</span>
-            <strong class={balanceClass(Number(selected.balance))}>
-                {Math.abs(Number(selected.balance)).toFixed(2)}
-                <span class="bal-tag">{balanceLabel(Number(selected.balance))}</span>
-            </strong>
+            <div class="bal-row">
+                <span>Balance:</span>
+                <strong class={balanceClass(Number(selected.balance))}>
+                    {Math.abs(Number(selected.balance)).toFixed(2)}
+                    <span class="bal-tag">{balanceLabel(Number(selected.balance))}</span>
+                </strong>
+            </div>
+            {#if partyOutstanding && partyOutstanding.on_account > 0.001}
+                <div class="bal-row bal-detail">
+                    <span class="muted">Outstanding:</span>
+                    <span>{Math.abs(partyOutstanding.outstanding).toFixed(2)}</span>
+                </div>
+                <div class="bal-row bal-detail on-acc">
+                    <span>On account:</span>
+                    <span>{partyOutstanding.on_account.toFixed(2)}</span>
+                </div>
+            {/if}
         </div>
+
         <div class="lfilter">
             <button class:active={ledgerFilter === "ALL"} onclick={() => (ledgerFilter = "ALL")}>All</button>
             <button class:active={ledgerFilter === "SALE"} onclick={() => (ledgerFilter = "SALE")}>Sale</button>
-            <button class:active={ledgerFilter === "PURCHASE"} onclick={() => (ledgerFilter = "PURCHASE")}>Purchase</button>
-            <button class:active={ledgerFilter === "RECEIVED"} onclick={() => (ledgerFilter = "RECEIVED")}>Receipt</button>
-            <button class:active={ledgerFilter === "PAYMENT"} onclick={() => (ledgerFilter = "PAYMENT")}>Payment</button>
+            <button class:active={ledgerFilter === "PURCHASE"} onclick={() => (ledgerFilter = "PURCHASE")}>Purchase
+            </button>
+            <button class:active={ledgerFilter === "RECEIVED"} onclick={() => (ledgerFilter = "RECEIVED")}>Receipt
+            </button>
+            <button class:active={ledgerFilter === "PAYMENT"} onclick={() => (ledgerFilter = "PAYMENT")}>Payment
+            </button>
         </div>
         {#if filteredLedger.length === 0}
             <p class="muted">{ledgerLoading ? "Loading…" : "No transactions yet."}</p>
@@ -272,7 +309,6 @@
         {/if}
     {/if}
 {/snippet}
-
 
 
 {#snippet infoPanel()}
@@ -802,4 +838,20 @@
         padding-top: 10px;
         border-top: 1px solid var(--border);
     }
+
+    .bal-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .bal-detail {
+        font-size: 11px;
+        margin-top: 2px;
+    }
+
+    .on-acc {
+        color: var(--warn);
+    }
+
 </style>

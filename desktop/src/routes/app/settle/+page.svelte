@@ -34,7 +34,12 @@
         bill_type: string; bill_id: number; number: string;
         date: string; total: number; settled: number; open: number;
     };
-    type OpenBills = { outstanding_total: number; bills: OpenBill[] };
+    type OpenBills = {
+        outstanding_total: number;
+        balance: number;
+        on_account: number;
+        bills: OpenBill[]
+    };
     type SettlementMode = {
         id: number; name: string; is_system: boolean; is_active: boolean; sort_order: number;
     };
@@ -90,7 +95,11 @@
             issues.push({
                 code: "settle-overpay",
                 message: `Amount (${amt.toFixed(2)}) exceeds the outstanding total (${outstanding.toFixed(2)}). The excess will remain as an advance on account.`,
-                focus: () => { const el = document.getElementById("amount") as HTMLInputElement | null; el?.focus(); el?.select(); },
+                focus: () => {
+                    const el = document.getElementById("amount") as HTMLInputElement | null;
+                    el?.focus();
+                    el?.select();
+                },
             });
         }
 
@@ -103,7 +112,11 @@
         const issues = collectIssues();
         if (issues.length > 0) {
             warningIssues = issues;
-            warningNext = via === "confirm" ? () => { confirmOpen = true; } : () => { void save(); };
+            warningNext = via === "confirm" ? () => {
+                confirmOpen = true;
+            } : () => {
+                void save();
+            };
         } else if (via === "confirm") {
             confirmOpen = true;
         } else {
@@ -147,9 +160,13 @@
 
 
     const flowOpts = $derived({
-        onSave: (_opts: { direct: boolean }) => { attemptSave("direct"); },
+        onSave: (_opts: { direct: boolean }) => {
+            attemptSave("direct");
+        },
         isComplete,
-        onConfirm: () => { attemptSave("confirm"); },
+        onConfirm: () => {
+            attemptSave("confirm");
+        },
     });
 
     // Live preview: how much of `amount` will settle which open bills (oldest->latest).
@@ -320,7 +337,31 @@
     {:else if loadingPreview}
         <p class="muted">Loading open bills…</p>
     {:else if preview}
-        <h3>Open bills · outstanding {Number(preview.outstanding_total).toFixed(2)}</h3>
+        {@const bal = Number(preview.balance)}
+        {@const outstanding = Number(preview.outstanding_total)}
+        {@const onAcc = Number(preview.on_account)}
+        <div class="preview-summary">
+            <div class="ps-row">
+                <span>Balance</span>
+                <strong class={bal > 0 ? 'recv' : bal < 0 ? 'pay' : ''}>
+                    {Math.abs(bal).toFixed(2)}
+                    <span class="bal-tag">
+                        {bal > 0 ? 'receivable' : bal < 0 ? 'payable' : 'settled'}
+                    </span>
+                </strong>
+            </div>
+            {#if onAcc > 0.001}
+                <div class="ps-row on-acc">
+                    <span>On account (advance)</span>
+                    <strong>{onAcc.toFixed(2)}</strong>
+                </div>
+            {/if}
+            <div class="ps-row">
+                <span>Open bills</span>
+                <strong>{outstanding.toFixed(2)}</strong>
+            </div>
+        </div>
+<!--        <h3>Open bills · outstanding {Number(preview.outstanding_total).toFixed(2)}</h3>-->
         {#if preview.bills.length === 0}
             <p class="muted">Nothing outstanding.</p>
         {:else}
@@ -373,7 +414,8 @@
     <section class="head">
         <div class="field">
             <label for="party">Party</label>
-            <SmartLookup flow="party" oncreate={onPartyCreate} onselect={onPartySelect} placeholder="Search or create party…"
+            <SmartLookup flow="party" oncreate={onPartyCreate} onselect={onPartySelect}
+                         placeholder="Search or create party…"
                          type="PARTY" value={party}/>
         </div>
         <div class="field amt">
@@ -667,4 +709,43 @@
         padding: 1px 5px;
         border-radius: 4px;
     }
+
+    .preview-summary {
+        background: var(--bg-elevated);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 8px 10px;
+        margin-bottom: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .ps-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 13px;
+    }
+
+    .ps-row.on-acc {
+        color: var(--warn);
+        font-size: 12px;
+    }
+
+    .bal-tag {
+        font-size: 10px;
+        font-weight: 400;
+        margin-left: 4px;
+        color: var(--text-muted);
+    }
+
+    .recv {
+        color: var(--ok);
+    }
+
+    .pay {
+        color: var(--danger);
+    }
+
 </style>
