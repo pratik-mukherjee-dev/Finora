@@ -21,7 +21,7 @@ def create_received(user, company, fy, party, date, amount, number=None, mode=No
         company=company, financial_year=fy, party=party, date=date,
         number=num, amount=amount, total_amount=amount, mode=mode, created_by=user,
     )
-    post_entry(party, date, fy, "RECEIVED", r.id, debit=amount)
+    post_entry(party, date, fy, "RECEIVED", r.id, credit=amount)
     if target_bill_id is not None:
         apply_receipt_to_bill(r, target_bill_id)
     else:
@@ -39,7 +39,7 @@ def create_payment(user, company, fy, party, date, amount, number=None, mode=Non
         company=company, financial_year=fy, party=party, date=date,
         number=num, amount=amount, total_amount=amount, mode=mode, created_by=user,
     )
-    post_entry(party, date, fy, "PAYMENT", p.id, credit=amount)
+    post_entry(party, date, fy, "PAYMENT", p.id, debit=amount)
     if target_bill_id is not None:
         apply_payment_to_bill(p, target_bill_id)
     else:
