@@ -43,6 +43,7 @@
     let selectedId = $state<number | null>(null);
     let ledger = $state<LedgerEntry[]>([]);
     let ledgerLoading = $state(false);
+    let ledgerFilter = $state<string>("ALL");
     let error = $state<string | null>(null);
 
     // create dialog
@@ -76,6 +77,12 @@
     const totalPayable = $derived(
         parties.reduce((s, p) => s + Math.max(0, -Number(p.balance)), 0)
     );
+    const filteredLedger = $derived(
+        ledgerFilter === "ALL"
+            ? ledger
+            : ledger.filter((e) => e.voucher_type === ledgerFilter)
+    );
+
 
     // ── data loading ──────────────────────────────────────────────────────────
     async function loadParties() {
@@ -105,6 +112,7 @@
 
     function selectParty(p: Party) {
         selectedId = p.id;
+        ledgerFilter = "ALL";
         startEdit(p);
         void loadLedger(p.id);
         shell.activeTab = "ledger";
@@ -233,7 +241,14 @@
                 <span class="bal-tag">{balanceLabel(Number(selected.balance))}</span>
             </strong>
         </div>
-        {#if ledger.length === 0}
+        <div class="lfilter">
+            <button class:active={ledgerFilter === "ALL"} onclick={() => (ledgerFilter = "ALL")}>All</button>
+            <button class:active={ledgerFilter === "SALE"} onclick={() => (ledgerFilter = "SALE")}>Sale</button>
+            <button class:active={ledgerFilter === "PURCHASE"} onclick={() => (ledgerFilter = "PURCHASE")}>Purchase</button>
+            <button class:active={ledgerFilter === "RECEIVED"} onclick={() => (ledgerFilter = "RECEIVED")}>Receipt</button>
+            <button class:active={ledgerFilter === "PAYMENT"} onclick={() => (ledgerFilter = "PAYMENT")}>Payment</button>
+        </div>
+        {#if filteredLedger.length === 0}
             <p class="muted">{ledgerLoading ? "Loading…" : "No transactions yet."}</p>
         {:else}
             <div class="lhead">
@@ -242,7 +257,7 @@
                 <span class="rt">Cr</span>
                 <span class="rt">Bal</span>
             </div>
-            {#each ledger as e (e.id)}
+            {#each filteredLedger as e (e.id)}
                 <div class="lrow" class:reversal={e.is_reversal}>
                     <span class="ltype">
                         <span class="lvoucher">{VOUCHER_LABELS[e.voucher_type] ?? e.voucher_type} #{e.voucher_id}</span>
@@ -257,6 +272,7 @@
         {/if}
     {/if}
 {/snippet}
+
 
 
 {#snippet infoPanel()}
@@ -631,6 +647,34 @@
         margin-left: 4px;
         color: var(--text-muted);
     }
+
+    .lfilter {
+        display: flex;
+        gap: 2px;
+        margin-bottom: 8px;
+        flex-wrap: wrap;
+    }
+
+    .lfilter button {
+        padding: 3px 8px;
+        font-size: 10px;
+        border-radius: 4px;
+        border: 1px solid var(--border-hi);
+        background: transparent;
+        color: var(--text-muted);
+        cursor: pointer;
+    }
+
+    .lfilter button.active {
+        background: var(--accent-soft);
+        color: var(--accent-text);
+        border-color: var(--accent);
+    }
+
+    .lfilter button:hover:not(.active) {
+        background: var(--bg-elevated);
+    }
+
 
     /* ── ledger panel (compact, no h-scroll) ── */
     .lhead {
