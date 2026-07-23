@@ -49,7 +49,5 @@ A Tally-inspired desktop accounting application built with **Svelte 5 (Runes)** 
 
 1. **Wire cancel buttons** in Sale, Purchase, and Settle page frontends (backend is ready)
 2. **Fix orphaned allocations** - add `_reverse_bill_allocations` to `cancel_sale` and `cancel_purchase`
-3. **On-account visibility** - add `balance` + `on_account` to `open_bills_preview` response; update Settle + Parties UI
-4. **GST charges (v2)** - item-wise CGST/SGST computation, HSN codes, GSTR-1 data shape
-5. **Reports** - Party statement, day book, outstanding reports
-6. **Invoice print** - PDF generation for sale/purchase vouchers
+3. **GST charges (v2)** - item-wise CGST/SGST computation, HSN codes, GSTR-1 data shape
+4. **Reports** - Party statement, day book, outstanding reports

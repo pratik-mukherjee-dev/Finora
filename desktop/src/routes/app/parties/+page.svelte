@@ -257,7 +257,7 @@
         </div>
         <div class="bal-summary">
             <div class="bal-row">
-                <span>Balance:</span>
+                <span>Balance:&nbsp;</span>
                 <strong class={balanceClass(Number(selected.balance))}>
                     {Math.abs(Number(selected.balance)).toFixed(2)}
                     <span class="bal-tag">{balanceLabel(Number(selected.balance))}</span>
@@ -265,11 +265,11 @@
             </div>
             {#if partyOutstanding && partyOutstanding.on_account > 0.001}
                 <div class="bal-row bal-detail">
-                    <span class="muted">Outstanding:</span>
+                    <span class="muted">Outstanding:&nbsp;</span>
                     <span>{Math.abs(partyOutstanding.outstanding).toFixed(2)}</span>
                 </div>
                 <div class="bal-row bal-detail on-acc">
-                    <span>On account:</span>
+                    <span>On account:&nbsp;</span>
                     <span>{partyOutstanding.on_account.toFixed(2)}</span>
                 </div>
             {/if}
@@ -668,8 +668,8 @@
 
     .bal-summary {
         display: flex;
-        justify-content: space-between;
-        align-items: center;
+        flex-direction: column;
+        gap: 6px;
         padding: 8px 10px;
         border-radius: var(--radius);
         background: var(--bg-elevated);
