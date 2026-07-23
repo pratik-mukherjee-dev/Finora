@@ -18,8 +18,16 @@
         if (auth.needsFy) return void goto("/fy");
         void loadModes();
         void loadHistory();
+        if (rows.length === 0) rows = [newRow()];
+        focusParty();
     });
 
+    type SettlementMode = {
+        id: number; name: string; category: "CASH" | "BANK";
+        bank_type: "UPI" | "TRANSFER" | "CHEQUE" | "OTHER" | null;
+        is_system: boolean; is_active: boolean; sort_order: number;
+        needs_reference: boolean;
+    };
     type Allocation = {
         id: number; bill_type: string; bill_id: number; bill_number: string | null;
         bill_date: string | null; bill_total: number | null; amount: number;
@@ -33,78 +41,79 @@
         bill_type: string; bill_id: number; number: string;
         date: string; total: number; settled: number; open: number;
     };
-    type OpenBills = {
-        outstanding_total: number;
-        balance: number;
-        on_account: number;
-        bills: OpenBill[]
-    };
-    type SettlementMode = {
-        id: number; name: string; is_system: boolean; is_active: boolean; sort_order: number;
-    };
+    type OpenBills = { outstanding_total: number; balance: number; on_account: number; bills: OpenBill[] };
 
-    type SettleCategory = "CASH" | "BANK";
-    type BankSubMode = "UPI" | "TRANSFER" | "CHEQUE" | "OTHER";
+    type SettleRow = { key: number; modeId: number | null; amount: string; transactionRef: string; };
+
+    let rowSeq = 0;
+    const newRow = (): SettleRow => ({key: ++rowSeq, modeId: null, amount: "", transactionRef: ""});
 
     const today = new Date().toISOString().slice(0, 10);
     let party = $state<Suggestion | null>(null);
     let date = $state(today);
-    let amount = $state("0");
+    let rows = $state<SettleRow[]>([newRow()]);
     let saving = $state(false);
     let error = $state<string | null>(null);
-    let result = $state<SettleResult | null>(null);
+    let results = $state<SettleResult[]>([]);
     let history = $state<Voucher[]>([]);
     let loadingHistory = $state(false);
     let selectedId = $state<number | null>(null);
+    let selectedResult = $state<SettleResult | null>(null);
     let preview = $state<OpenBills | null>(null);
     let loadingPreview = $state(false);
     let partyDialog = $state<string | null>(null);
     let modes = $state<SettlementMode[]>([]);
-    let modeId = $state<number | null>(null);
-
-    let settleCategory = $state<SettleCategory>("CASH");
-    let bankSubMode = $state<BankSubMode>("UPI");
-    let transactionRef = $state("");
-
-    const companyId = $derived(auth.currentCompany?.id ?? null);
-    const endpoint = "/api/vouchers/received/";
-    const canSave = $derived(!!party && !!companyId && Number(amount) > 0 && !saving);
-    const allocated = $derived((result?.allocations ?? []).reduce((s, a) => s + (Number(a.amount) || 0), 0));
-    const unallocated = $derived(result ? Math.max(0, (Number(result.amount) || 0) - allocated) : 0);
-    const modeOptions = $derived(modes.filter((m) => m.is_active).map((m) => ({id: m.id, name: m.name})));
+    let partyLookup = $state<{ focus: () => void } | null>(null);
 
     let confirmOpen = $state(false);
     let warningIssues = $state<Issue[] | null>(null);
     let warningNext = $state<(() => void) | null>(null);
 
+    const companyId = $derived(auth.currentCompany?.id ?? null);
+    const endpoint = "/api/vouchers/received/";
+    const modeById = $derived(new Map(modes.map((m) => [m.id, m])));
+    const modeOptions = $derived(modes.filter((m) => m.is_active).map((m) => ({id: m.id, name: m.name})));
+    const totalAmount = $derived(rows.reduce((s, r) => s + (Number(r.amount) || 0), 0));
+    const canSave = $derived(!!party && !!companyId && totalAmount > 0 && !saving);
+
+    function modeOf(row: SettleRow): SettlementMode | undefined {
+        return row.modeId != null ? modeById.get(row.modeId) : undefined;
+    }
+
+    function needsRef(row: SettleRow): boolean {
+        return modeOf(row)?.needs_reference ?? false;
+    }
+
     function isComplete(): boolean {
-        return !!party && !!companyId && Number(amount) > 0 && !!date;
+        return !!party && !!companyId && totalAmount > 0 && !!date;
     }
 
     function collectIssues(): Issue[] {
         const issues: Issue[] = [];
-        const amt = Number(amount) || 0;
-        if (amt > 0 && modeId == null) {
-            issues.push({
-                code: "settle-no-mode",
-                message: "No settlement mode selected.",
-                focus: () => document.getElementById("amount")?.focus()
-            });
-        }
-        if (settleCategory === "BANK" && bankSubMode === "CHEQUE" && !transactionRef.trim()) {
-            issues.push({
-                code: "settle-no-cheque-no",
-                message: "Cheque number is empty. You can proceed without it.",
-                focus: () => document.getElementById("txn-ref")?.focus()
-            });
-        }
+        const rowEls = () => Array.from(document.querySelectorAll<HTMLElement>(".srow"));
+        rows.forEach((r, i) => {
+            const amt = Number(r.amount) || 0;
+            if (amt > 0 && r.modeId == null) {
+                issues.push({
+                    code: `row-${i}-no-mode`, message: `Row ${i + 1}: amount entered but no mode selected.`,
+                    focus: () => rowEls()[i]?.querySelector<HTMLElement>('[data-flow="mode"]')?.focus()
+                });
+            }
+            const mode = modeOf(r);
+            if (amt > 0 && mode?.category === "BANK" && mode?.bank_type === "CHEQUE" && !r.transactionRef.trim()) {
+                issues.push({
+                    code: `row-${i}-no-cheque`, message: `Row ${i + 1} (${mode.name}): cheque number is empty.`,
+                    focus: () => rowEls()[i]?.querySelector<HTMLInputElement>('[data-flow="txn-ref"]')?.focus()
+                });
+            }
+        });
         const outstanding = Number(preview?.outstanding_total ?? 0);
-        if (amt > 0 && outstanding > 0 && amt > outstanding) {
+        if (totalAmount > 0 && outstanding > 0 && totalAmount > outstanding) {
             issues.push({
                 code: "settle-overpay",
-                message: `Amount (${amt.toFixed(2)}) exceeds the outstanding total (${outstanding.toFixed(2)}). The excess will remain as an advance on account.`,
+                message: `Total (${totalAmount.toFixed(2)}) exceeds outstanding (${outstanding.toFixed(2)}). Excess stays on account.`,
                 focus: () => {
-                    const el = document.getElementById("amount") as HTMLInputElement | null;
+                    const el = document.querySelector<HTMLInputElement>('.srow [data-flow="amount"]');
                     el?.focus();
                     el?.select();
                 }
@@ -133,21 +142,21 @@
     function closeWarning() {
         warningIssues = null;
         warningNext = null;
-        setTimeout(() => (document.getElementById("amount") as HTMLElement | null)?.focus(), 0);
+        focusParty();
     }
 
     function reviewWarning() {
-        const first = warningIssues?.[0];
+        const f = warningIssues?.[0];
         warningIssues = null;
         warningNext = null;
-        first?.focus();
+        f?.focus();
     }
 
     function proceedWarning() {
-        const next = warningNext;
+        const n = warningNext;
         warningIssues = null;
         warningNext = null;
-        next?.();
+        n?.();
     }
 
     function requestSave() {
@@ -161,28 +170,84 @@
 
     function closeConfirm() {
         confirmOpen = false;
-        setTimeout(() => (document.getElementById("amount") as HTMLElement | null)?.focus(), 0);
+        focusParty();
     }
 
     const flowOpts = $derived({
-        onSave: (_opts: { direct: boolean }) => {
+        onSave: () => {
             attemptSave("direct");
-        },
-        isComplete,
-        onConfirm: () => {
+        }, isComplete, onConfirm: () => {
             attemptSave("confirm");
-        },
+        }
     });
 
     const previewPlan = $derived.by(() => {
         if (!preview) return [];
-        let remaining = Number(amount) || 0;
+        let remaining = totalAmount;
         return preview.bills.map((b) => {
             const take = Math.min(remaining, Number(b.open));
             remaining = Math.max(0, remaining - take);
             return {...b, willSettle: take};
         });
     });
+
+    function addRow() {
+        rows = [...rows, newRow()];
+        setTimeout(() => {
+            const els = document.querySelectorAll<HTMLElement>('.srow [data-flow="mode"]');
+            els[els.length - 1]?.focus();
+        }, 0);
+    }
+
+    function removeRow(key: number) {
+        rows = rows.length > 1 ? rows.filter((r) => r.key !== key) : rows;
+    }
+
+    function onAmountEnter(e: KeyboardEvent, row: SettleRow) {
+        if (e.key !== "Enter" || e.ctrlKey || e.metaKey) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const isLast = rows[rows.length - 1]?.key === row.key;
+        if (!isLast) {
+            const idx = rows.findIndex((r) => r.key === row.key);
+            setTimeout(() => {
+                document.querySelectorAll<HTMLElement>('.srow [data-flow="mode"]')[idx + 1]?.focus();
+            }, 0);
+            return;
+        }
+        if ((Number(row.amount) || 0) > 0) addRow();
+        else {
+            if (rows.length > 1) removeRow(row.key);
+            setTimeout(() => document.querySelector<HTMLElement>('[data-flow="save"]')?.focus(), 0);
+        }
+    }
+
+    function onRefEnter(e: KeyboardEvent, row: SettleRow) {
+        if (e.key !== "Enter" || e.ctrlKey || e.metaKey) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const isLast = rows[rows.length - 1]?.key === row.key;
+        if (!isLast) {
+            const idx = rows.findIndex((r) => r.key === row.key);
+            setTimeout(() => {
+                document.querySelectorAll<HTMLElement>('.srow [data-flow="mode"]')[idx + 1]?.focus();
+            }, 0);
+        } else {
+            if ((Number(row.amount) || 0) > 0) addRow(); else {
+                if (rows.length > 1) removeRow(row.key);
+                setTimeout(() => document.querySelector<HTMLElement>('[data-flow="save"]')?.focus(), 0);
+            }
+        }
+    }
+
+    function onModePicked(_row: SettleRow) { /* LedgerLookup onenter advances to amount via data-flow */
+    }
+
+    function onModeEmptyEnter(row: SettleRow) {
+        const isLast = rows[rows.length - 1]?.key === row.key;
+        if (isLast && rows.length > 1 && row.modeId == null && (Number(row.amount) || 0) === 0) removeRow(row.key);
+        setTimeout(() => document.querySelector<HTMLElement>('[data-flow="save"]')?.focus(), 0);
+    }
 
     function onPartySelect(s: Suggestion) {
         party = s;
@@ -201,30 +266,19 @@
         void loadPreview();
     }
 
-    function setCategory(c: SettleCategory) {
-        settleCategory = c;
-        transactionRef = "";
-        if (c === "CASH") bankSubMode = "UPI";
+    function focusParty() {
+        setTimeout(() => partyLookup?.focus(), 0);
     }
 
     async function loadModes() {
         try {
-            const rows = await request<SettlementMode[] | {
+            const res = await request<SettlementMode[] | {
                 results?: SettlementMode[]
             }>("/api/accounts/settlement-modes/");
-            modes = Array.isArray(rows) ? rows : (rows?.results ?? []);
-            if (modeId == null) {
-                const active = modes.filter((m) => m.is_active);
-                const sys = active.find((m) => m.is_system);
-                modeId = sys?.id ?? active[0]?.id ?? null;
-            }
+            modes = Array.isArray(res) ? res : (res?.results ?? []);
         } catch {
             modes = [];
         }
-    }
-
-    function onModeSelect(id: number) {
-        modeId = id;
     }
 
     async function loadHistory() {
@@ -233,8 +287,8 @@
         try {
             const p = new URLSearchParams({company: String(companyId)});
             if (party) p.set("party", String(party.id));
-            const rows = await request<Voucher[] | { results?: Voucher[] }>(`${endpoint}?${p.toString()}`);
-            history = Array.isArray(rows) ? rows : (rows?.results ?? []);
+            const res = await request<Voucher[] | { results?: Voucher[] }>(`${endpoint}?${p.toString()}`);
+            history = Array.isArray(res) ? res : (res?.results ?? []);
         } catch {
             history = [];
         } finally {
@@ -264,7 +318,7 @@
         error = null;
         try {
             const allocs = await request<Allocation[]>(`${endpoint}${v.id}/allocations/`);
-            result = {id: v.id, number: v.number, amount: Number(v.amount), allocations: allocs ?? []};
+            selectedResult = {id: v.id, number: v.number, amount: Number(v.amount), allocations: allocs ?? []};
             shell.activeTab = "allocation";
         } catch (e) {
             error = e instanceof Error ? e.message : "Could not load allocations.";
@@ -273,24 +327,40 @@
 
     async function save() {
         if (!party || !companyId || saving) return;
+        const validRows = rows.filter((r) => r.modeId != null && (Number(r.amount) || 0) > 0);
+        if (validRows.length === 0) {
+            error = "Add at least one row with a mode and amount.";
+            return;
+        }
         saving = true;
         error = null;
-        result = null;
+        results = [];
         selectedId = null;
+        selectedResult = null;
         try {
-            const res = await request<SettleResult>(endpoint, {
-                method: "POST",
-                body: JSON.stringify({
-                    company: companyId, party: party.id, date,
-                    amount: Number(amount), mode: modeId, number: null,
-                    settle_category: settleCategory,
-                    bank_sub_mode: settleCategory === "BANK" ? bankSubMode : null,
-                    transaction_ref: (settleCategory === "BANK" && transactionRef.trim()) ? transactionRef.trim() : null,
-                }),
-            });
-            result = {id: res.id, number: res.number, amount: Number(res.amount), allocations: res.allocations ?? []};
-            amount = "0";
-            transactionRef = "";
+            const posted: SettleResult[] = [];
+            for (const r of validRows) {
+                const res = await request<SettleResult>(endpoint, {
+                    method: "POST",
+                    body: JSON.stringify({
+                        company: companyId,
+                        party: party.id,
+                        date,
+                        amount: Number(r.amount),
+                        mode: r.modeId,
+                        number: null,
+                        transaction_ref: r.transactionRef.trim() || null
+                    })
+                });
+                posted.push({
+                    id: res.id,
+                    number: res.number,
+                    amount: Number(res.amount),
+                    allocations: res.allocations ?? []
+                });
+            }
+            results = posted;
+            rows = [newRow()];
             await loadHistory();
             await loadPreview();
             shell.activeTab = "allocation";
@@ -301,10 +371,37 @@
         }
     }
 
+    function resetForm() {
+        party = null;
+        date = today;
+        rows = [newRow()];
+        error = null;
+        results = [];
+        selectedId = null;
+        selectedResult = null;
+        focusParty();
+    }
+
+    const confirmMessage = $derived.by(() => {
+        const validRows = rows.filter((r) => r.modeId != null && (Number(r.amount) || 0) > 0);
+        const parts = validRows.map((r) => {
+            const mode = modeOf(r);
+            return `${Number(r.amount).toFixed(2)} via ${mode?.name ?? "?"}${r.transactionRef.trim() ? ` (${r.transactionRef.trim()})` : ""}`;
+        });
+        return `Party: ${party?.name ?? "—"}\n${parts.join("\n")}\nTotal: ${totalAmount.toFixed(2)}. Auto-settle oldest → latest?`;
+    });
+
     const shell = registerScreen(() => ({
         title: "Received",
-        actions: [{id: "set-save", label: "Save", icon: "✓", shortcut: "Ctrl+Enter", run: requestSave}],
-        shortcuts: [],
+        actions: [
+            {id: "rcv-new", label: "New", icon: "＋", shortcut: "Ctrl+N", run: resetForm},
+            {id: "rcv-add", label: "Add row", icon: "▸", shortcut: "Alt+A", run: addRow},
+            {id: "rcv-save", label: "Save", icon: "✓", shortcut: "Ctrl+Enter", run: requestSave},
+        ],
+        shortcuts: [
+            {id: "rcv-k-new", keychord: "ctrl+n", label: "New", run: resetForm},
+            {id: "rcv-k-add", keychord: "alt+a", label: "Add row", run: addRow},
+        ],
         panel: [
             {id: "allocation", title: "Allocation", body: allocationPanel},
             {id: "history", title: "History", body: historyPanel},
@@ -313,34 +410,35 @@
 </script>
 
 {#snippet allocationPanel()}
-    {#if result}
-        <div class="banner ok">#{result.number} · {result.amount.toFixed(2)}</div>
-        <h3>Settled</h3>
-        {#if result.allocations.length === 0}
-            <p class="muted">No open bills settled. Kept on account.</p>
+    {#if results.length > 0}
+        {#each results as r (r.id)}
+            <div class="banner ok">#{r.number} · {r.amount.toFixed(2)}</div>
+            {#if r.allocations.length > 0}
+                {#each r.allocations as a (a.id)}
+                    <div class="arow"><span>#{a.bill_number ?? a.bill_id}</span><span
+                            class="rt">{Number(a.amount).toFixed(2)}</span></div>
+                {/each}
+            {:else}<p class="muted">Kept on account.</p>{/if}
+        {/each}
+    {:else if selectedResult}
+        <div class="banner ok">#{selectedResult.number} · {selectedResult.amount.toFixed(2)}</div>
+        {#if selectedResult.allocations.length === 0}<p class="muted">No open bills settled. Kept on account.</p>
         {:else}
-            {#each result.allocations as a (a.id)}
-                <div class="arow"><span>#{a.bill_number ?? a.bill_id}</span>
-                    <span class="rt">{Number(a.amount).toFixed(2)}</span></div>
+            {#each selectedResult.allocations as a (a.id)}
+                <div class="arow"><span>#{a.bill_number ?? a.bill_id}</span><span
+                        class="rt">{Number(a.amount).toFixed(2)}</span></div>
             {/each}
-            <div class="sumline"><span>Allocated</span><strong>{allocated.toFixed(2)}</strong></div>
-            {#if unallocated > 0}
-                <div class="sumline adv"><span>On account</span><strong>{unallocated.toFixed(2)}</strong></div>
-            {/if}
         {/if}
-    {:else if !party}
-        <p class="muted">Pick a party to preview open sales.</p>
-    {:else if loadingPreview}
-        <p class="muted">Loading open bills…</p>
+    {:else if !party}<p class="muted">Pick a party to preview open sales.</p>
+    {:else if loadingPreview}<p class="muted">Loading open bills…</p>
     {:else if preview}
         {@const bal = Number(preview.balance)}
         {@const outstanding = Number(preview.outstanding_total)}
         {@const onAcc = Number(preview.on_account)}
         <div class="preview-summary">
-            <div class="ps-row"><span>Balance</span>
-                <strong class={bal > 0 ? 'recv' : bal < 0 ? 'pay' : ''}>{Math.abs(bal).toFixed(2)}
-                    <span class="bal-tag">{bal > 0 ? 'receivable' : bal < 0 ? 'payable' : 'settled'}</span></strong>
-            </div>
+            <div class="ps-row"><span>Balance</span><strong
+                    class={bal > 0 ? 'recv' : bal < 0 ? 'pay' : ''}>{Math.abs(bal).toFixed(2)} <span
+                    class="bal-tag">{bal > 0 ? 'receivable' : bal < 0 ? 'payable' : 'settled'}</span></strong></div>
             {#if onAcc > 0.001}
                 <div class="ps-row on-acc"><span>On account (advance)</span><strong>{onAcc.toFixed(2)}</strong></div>
             {/if}
@@ -350,17 +448,15 @@
         {:else}
             <div class="ahead"><span>Bill</span><span class="rt">Open</span><span class="rt">Will settle</span></div>
             {#each previewPlan as b (b.bill_id)}
-                <div class="arow"><span>#{b.number}</span>
-                    <span class="rt">{Number(b.open).toFixed(2)}</span>
-                    <span class="rt" class:hot={b.willSettle > 0}>{b.willSettle.toFixed(2)}</span></div>
+                <div class="arow"><span>#{b.number}</span><span class="rt">{Number(b.open).toFixed(2)}</span><span
+                        class="rt" class:hot={b.willSettle > 0}>{b.willSettle.toFixed(2)}</span></div>
             {/each}
         {/if}
     {/if}
 {/snippet}
 
 {#snippet historyPanel()}
-    <div class="sidehead">
-        <span class="muted">Receipts{party ? ` · ${party.name}` : ""}</span>
+    <div class="sidehead"><span class="muted">Receipts{party ? ` · ${party.name}` : ""}</span>
         <button class="refresh" onclick={loadHistory} disabled={loadingHistory}>{loadingHistory ? "…" : "↻"}</button>
     </div>
     {#if history.length === 0}<p class="muted">{loadingHistory ? "Loading…" : "No records."}</p>
@@ -381,61 +477,66 @@
 {/snippet}
 
 <div class="wrap" use:enterFlow={flowOpts}>
-    <h2 class="page-title">Received</h2>
-    <p class="sub">Receive from a customer. Auto-settles open sales oldest → latest.</p>
-
     {#if error}
         <div class="banner err">{error}</div>
+    {/if}
+    {#if results.length > 0}
+        <div class="banner ok">Posted {results.length} receipt{results.length > 1 ? "s" : ""} ·
+            total {results.reduce((s, r) => s + r.amount, 0).toFixed(2)}.
+        </div>
     {/if}
 
     <section class="head">
         <div class="field"><label for="party">Party</label>
-            <SmartLookup flow="party" oncreate={onPartyCreate} onselect={onPartySelect}
+            <SmartLookup bind:this={partyLookup} flow="party" oncreate={onPartyCreate} onselect={onPartySelect}
                          placeholder="Search or create party…" type="PARTY" value={party}/>
-        </div>
-        <div class="field amt"><label for="amount">Amount</label>
-            <input bind:value={amount} class="num" data-flow="amount" id="amount" min="0" step="0.01" type="number"/>
         </div>
         <div class="field date"><label for="date">Date</label>
             <input bind:value={date} data-flow="date" id="date" type="date"/></div>
     </section>
 
-    <section class="mode-section">
-        <div class="field mode"><label>Mode</label>
-            <LedgerLookup bind:value={modeId} flow="mode" onselect={onModeSelect} options={modeOptions}
-                          placeholder="Settlement mode…"/>
+    <section class="grid">
+        <div class="ghead"><span>Mode</span><span>Amount</span><span>Category</span><span>Bank Mode</span><span>Reference</span><span></span>
         </div>
-        <div class="field category"><label>Category</label>
-            <div class="toggle">
-                <button class:active={settleCategory === "CASH"} onclick={() => setCategory("CASH")}>Cash</button>
-                <button class:active={settleCategory === "BANK"} onclick={() => setCategory("BANK")}>Bank</button>
-            </div>
-        </div>
-        {#if settleCategory === "BANK"}
-            <div class="field sub-mode"><label>Bank Mode</label>
-                <div class="toggle">
-                    <button class:active={bankSubMode === "UPI"} onclick={() => (bankSubMode = "UPI")}>UPI</button>
-                    <button class:active={bankSubMode === "TRANSFER"} onclick={() => (bankSubMode = "TRANSFER")}>
-                        Transfer
-                    </button>
-                    <button class:active={bankSubMode === "CHEQUE"} onclick={() => (bankSubMode = "CHEQUE")}>Cheque
-                    </button>
-                    <button class:active={bankSubMode === "OTHER"} onclick={() => (bankSubMode = "OTHER")}>Other
-                    </button>
+        {#each rows as row (row.key)}
+            {@const mode = modeOf(row)}
+            {@const isBank = mode?.category === "BANK"}
+            <div class="srow">
+                <div class="cell mode-cell">
+                    <LedgerLookup flow="mode" options={modeOptions} value={row.modeId} placeholder="Pick mode…"
+                                  onselect={(id) => (row.modeId = id)} onenter={() => onModePicked(row)}
+                                  onemptyenter={() => onModeEmptyEnter(row)}/>
                 </div>
+                <div class="cell"><input class="num" type="number" min="0" step="0.01" data-flow="amount"
+                                         bind:value={row.amount} placeholder="0.00"
+                                         onkeydown={(e) => !needsRef(row) ? onAmountEnter(e, row) : undefined}/></div>
+                <div class="cell cat-cell">
+                    {#if mode}<span class="tag" class:bank={isBank}>{mode.category}</span>{:else}<span
+                            class="tag empty">—</span>{/if}
+                </div>
+                <div class="cell bt-cell">
+                    {#if isBank && mode?.bank_type}<span class="tag bank-type">{mode.bank_type}</span>{:else}<span
+                            class="tag empty">—</span>{/if}
+                </div>
+                <div class="cell ref-cell">
+                    {#if isBank}<input type="text" data-flow="txn-ref" bind:value={row.transactionRef}
+                                       placeholder={mode?.bank_type === "CHEQUE" ? "Cheque no." : mode?.bank_type === "UPI" ? "UPI ref / UTR" : "Txn ID"}
+                                       onkeydown={(e) => onRefEnter(e, row)}/>
+                    {:else}<span class="tag empty">—</span>{/if}
+                </div>
+                <button class="del" title="Remove row" onclick={() => removeRow(row.key)}>✕</button>
             </div>
-            <div class="field ref"><label
-                    for="txn-ref">{bankSubMode === "CHEQUE" ? "Cheque No." : bankSubMode === "UPI" ? "UPI Ref / UTR" : "Transaction ID"}</label>
-                <input bind:value={transactionRef} data-flow="txn-ref" id="txn-ref" type="text"
-                       placeholder={bankSubMode === "CHEQUE" ? "Cheque number (optional)" : "Reference (optional)"}/>
-            </div>
-        {/if}
+        {/each}
+        <button class="addline" onclick={addRow}>+ Add row <kbd>Alt A</kbd></button>
+    </section>
+
+    <section class="totals">
+        <div class="trow final"><span>Total</span><strong>{totalAmount.toFixed(2)}</strong></div>
     </section>
 
     <footer class="foot">
         <button class="save" data-flow="save" disabled={!canSave} onclick={requestSave} type="button">
-            {saving ? "Saving…" : "Save receipt"} <kbd>Ctrl ⏎</kbd>
-        </button>
+            {saving ? "Saving…" : "Post receipt"} <kbd>Ctrl ⏎</kbd></button>
     </footer>
 </div>
 
@@ -446,28 +547,47 @@
     <WarningDialog issues={warningIssues} onreview={reviewWarning} onproceed={proceedWarning} oncancel={closeWarning}/>
 {/if}
 {#if confirmOpen}
-    <ConfirmDialog title="Confirm receipt"
-                   message={`Party: ${party?.name ?? "—"} · Amount ${Number(amount).toFixed(2)} · ${settleCategory}${settleCategory === "BANK" ? ` (${bankSubMode})` : ""}${transactionRef ? ` · Ref: ${transactionRef}` : ""}. Auto-settle oldest → latest?`}
-                   confirmLabel="Post receipt" busy={saving} onconfirm={confirmSave} oncancel={closeConfirm}/>
+    <ConfirmDialog title="Confirm receipt" message={confirmMessage} confirmLabel="Post receipt" busy={saving}
+                   onconfirm={confirmSave} oncancel={closeConfirm}/>
 {/if}
 
 <style>
     .wrap {
         padding: 20px 28px 40px;
         box-sizing: border-box;
-        max-width: 760px;
     }
 
-    .page-title {
-        margin: 0 0 4px;
-        font-size: 18px;
-        color: var(--text);
+    .head {
+        display: flex;
+        gap: 18px;
+        align-items: flex-end;
+        margin-bottom: 22px;
+        max-width: 520px;
     }
 
-    .sub {
+    .field {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .field.date {
+        max-width: 180px;
+    }
+
+    label {
+        font-size: 12px;
         color: var(--text-muted);
-        font-size: 13px;
-        margin: 0 0 18px;
+    }
+
+    input[type="date"] {
+        padding: 8px 10px;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-hi);
+        background: var(--bg-app);
+        color: var(--text);
+        font-size: 14px;
     }
 
     .banner {
@@ -489,99 +609,130 @@
         border: 1px solid var(--danger-border);
     }
 
-    .head {
-        display: flex;
-        gap: 18px;
-        margin-bottom: 20px;
+    .grid {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--bg-panel);
     }
 
-    .field {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
+    .ghead, .srow {
+        display: grid;
+        grid-template-columns: 1fr 130px 80px 90px 1fr 36px;
+        gap: 10px;
+        align-items: center;
+        padding: 10px 14px;
     }
 
-    .field.amt {
-        max-width: 200px;
-    }
-
-    .field.mode {
-        max-width: 200px;
-    }
-
-    .field.date {
-        max-width: 180px;
-    }
-
-    .field.category {
-        max-width: 160px;
-    }
-
-    .field.sub-mode {
-        max-width: 280px;
-    }
-
-    .field.ref {
-        max-width: 260px;
-    }
-
-    label {
-        font-size: 12px;
+    .ghead {
         color: var(--text-muted);
+        font-size: 12px;
+        border-bottom: 1px solid var(--border);
     }
 
-    .num, input[type="date"], input[type="text"] {
+    .srow {
+        border-bottom: 1px solid #171b23;
+    }
+
+    .cell {
+        min-width: 0;
+    }
+
+    .num {
         padding: 8px 10px;
         border-radius: var(--radius);
         border: 1px solid var(--border-hi);
         background: var(--bg-app);
         color: var(--text);
         font-size: 14px;
-        box-sizing: border-box;
-    }
-
-    .num {
         text-align: right;
+        box-sizing: border-box;
         width: 100%;
     }
 
     input[type="text"] {
+        padding: 8px 10px;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-hi);
+        background: var(--bg-app);
+        color: var(--text);
+        font-size: 13px;
+        box-sizing: border-box;
         width: 100%;
     }
 
-    .mode-section {
-        display: flex;
-        gap: 18px;
-        align-items: flex-end;
-        margin-bottom: 20px;
-        flex-wrap: wrap;
+    .tag {
+        font-size: 11px;
+        text-transform: uppercase;
+        padding: 3px 8px;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, .06);
+        color: var(--text-muted);
+        display: inline-block;
     }
 
-    .toggle {
-        display: inline-flex;
-        border: 1px solid var(--border-hi);
-        border-radius: var(--radius);
-        overflow: hidden;
+    .tag.bank {
+        background: rgba(47, 111, 235, .12);
+        color: var(--accent-text);
     }
 
-    .toggle button {
-        padding: 8px 16px;
+    .tag.bank-type {
+        background: rgba(52, 211, 153, .1);
+        color: #34d399;
+    }
+
+    .tag.empty {
+        opacity: .4;
+    }
+
+    .del {
+        align-self: center;
         background: transparent;
         border: none;
-        color: var(--text-muted);
+        color: #6b7280;
         cursor: pointer;
-        font-size: 13px;
     }
 
-    .toggle button.active {
-        background: var(--accent);
-        color: #fff;
+    .del:hover {
+        color: var(--danger);
+    }
+
+    .addline {
+        width: 100%;
+        padding: 10px;
+        background: transparent;
+        border: none;
+        color: var(--accent-text);
+        cursor: pointer;
+        font-size: 14px;
+        text-align: left;
+    }
+
+    .addline:hover {
+        background: var(--accent-soft);
+    }
+
+    .totals {
+        margin-top: 14px;
+        max-width: 300px;
+        margin-left: auto;
+    }
+
+    .trow {
+        display: flex;
+        justify-content: space-between;
+        font-size: 16px;
+        color: var(--text);
+        padding: 2px 2px;
+    }
+
+    .trow.final strong {
+        color: var(--ok);
     }
 
     .foot {
         display: flex;
         justify-content: flex-end;
+        margin-top: 20px;
     }
 
     .save {
@@ -606,12 +757,6 @@
         padding: 0 4px;
         font-size: 11px;
         margin-left: 6px;
-    }
-
-    h3 {
-        font-size: 13px;
-        margin: 8px 0;
-        color: var(--text);
     }
 
     .muted {
@@ -640,17 +785,6 @@
     .hot {
         color: var(--ok);
         font-weight: 600;
-    }
-
-    .sumline {
-        display: flex;
-        justify-content: space-between;
-        font-size: 13px;
-        margin-top: 8px;
-    }
-
-    .adv {
-        color: var(--warn);
     }
 
     .sidehead {

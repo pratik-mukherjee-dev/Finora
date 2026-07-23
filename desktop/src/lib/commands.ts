@@ -1,6 +1,3 @@
-// Single command/module registry. Activity bar, command palette, cheat-sheet,
-// and the global key listener all read from here. Modules are commands that
-// navigate. v2 (GST, e-invoice) adds entries here — no shell changes.
 import {goto} from "$app/navigation";
 
 export type CommandId = string;
@@ -8,22 +5,24 @@ export type CommandId = string;
 export interface Command {
     id: CommandId;
     label: string;
-    /** Single-glyph icon (kept dependency-free; swap for an icon set later). */
     icon?: string;
-    /** Human-readable shortcut, e.g. "Alt+2". Presentation + palette badge. */
     shortcut?: string;
-    /** Key matcher against a normalized KeyboardEvent signature (see shortcuts.ts). */
     keychord?: string;
-    /** Whether this command appears in the activity bar (module) vs palette-only. */
     module?: boolean;
-    /** Minimum mode required ("multi" hides single-mode-only entries). */
     minMode?: "single" | "multi";
     run: () => void;
 }
 
-/** Module commands — the primary activity-bar navigation. */
 export const modules: Command[] = [
-    {id: "home", label: "Home", icon: "⌂", shortcut: "Alt+1", keychord: "alt+1", module: true, run: () => goto("/app")},
+    {
+        id: "home",
+        label: "Home",
+        icon: "⌂",
+        shortcut: "Alt+1",
+        keychord: "alt+1",
+        module: true,
+        run: () => goto("/app")
+    },
     {
         id: "sale",
         label: "Sale",
@@ -31,7 +30,7 @@ export const modules: Command[] = [
         shortcut: "Alt+2",
         keychord: "alt+2",
         module: true,
-        run: () => goto("/app/sale"),
+        run: () => goto("/app/sale")
     },
     {
         id: "purchase",
@@ -40,7 +39,7 @@ export const modules: Command[] = [
         shortcut: "Alt+3",
         keychord: "alt+3",
         module: true,
-        run: () => goto("/app/purchase"),
+        run: () => goto("/app/purchase")
     },
     {
         id: "payment",
@@ -49,7 +48,7 @@ export const modules: Command[] = [
         shortcut: "Alt+4",
         keychord: "alt+4",
         module: true,
-        run: () => goto("/app/payment"),
+        run: () => goto("/app/payment")
     },
     {
         id: "received",
@@ -58,7 +57,7 @@ export const modules: Command[] = [
         shortcut: "Alt+5",
         keychord: "alt+5",
         module: true,
-        run: () => goto("/app/received"),
+        run: () => goto("/app/received")
     },
     {
         id: "stock",
@@ -67,7 +66,7 @@ export const modules: Command[] = [
         shortcut: "Alt+6",
         keychord: "alt+6",
         module: true,
-        run: () => goto("/app/stock"),
+        run: () => goto("/app/stock")
     },
     {
         id: "parties",
@@ -76,7 +75,7 @@ export const modules: Command[] = [
         shortcut: "Alt+7",
         keychord: "alt+7",
         module: true,
-        run: () => goto("/app/parties"),
+        run: () => goto("/app/parties")
     },
     {
         id: "items",
@@ -85,7 +84,7 @@ export const modules: Command[] = [
         shortcut: "Alt+8",
         keychord: "alt+8",
         module: true,
-        run: () => goto("/app/items"),
+        run: () => goto("/app/items")
     },
     {
         id: "reports",
@@ -94,7 +93,7 @@ export const modules: Command[] = [
         shortcut: "Alt+9",
         keychord: "alt+9",
         module: true,
-        run: () => goto("/app/reports"),
+        run: () => goto("/app/reports")
     },
     {
         id: "settings",
@@ -103,17 +102,15 @@ export const modules: Command[] = [
         shortcut: "Alt+0",
         keychord: "alt+0",
         module: true,
-        run: () => goto("/app/settings"),
+        run: () => goto("/app/settings")
     },
 ];
 
-/** Which module owns a given route (for activity-bar active state). */
 export function activeModuleId(pathname: string): CommandId {
     if (pathname.startsWith("/app/sale")) return "sale";
     if (pathname.startsWith("/app/purchase")) return "purchase";
     if (pathname.startsWith("/app/payment")) return "payment";
     if (pathname.startsWith("/app/received")) return "received";
-    if (pathname.startsWith("/app/settle")) return "payment"; // fallback for /app/settle
     if (pathname.startsWith("/app/stock")) return "stock";
     if (pathname.startsWith("/app/parties")) return "parties";
     if (pathname.startsWith("/app/items")) return "items";
