@@ -44,7 +44,14 @@
     let ledger = $state<LedgerEntry[]>([]);
     let ledgerLoading = $state(false);
     let ledgerFilter = $state<string>("ALL");
-    let partyOutstanding = $state<{ outstanding: number; on_account: number } | null>(null);
+    let partyOutstanding = $state<{
+        outstanding: number;
+        on_account: number;
+        receivable_outstanding: number;
+        payable_outstanding: number;
+        receivable_on_account: number;
+        payable_on_account: number;
+    } | null>(null);
     let error = $state<string | null>(null);
 
     // create dialog
@@ -122,13 +129,18 @@
                 ),
             ]);
             partyOutstanding = {
-                outstanding: Number(recv.outstanding_total) - Number(pay.outstanding_total),
+                outstanding: Number(recv.outstanding_total) + Number(pay.outstanding_total),
                 on_account: Number(recv.on_account) + Number(pay.on_account),
+                receivable_outstanding: Number(recv.outstanding_total),
+                payable_outstanding: Number(pay.outstanding_total),
+                receivable_on_account: Number(recv.on_account),
+                payable_on_account: Number(pay.on_account),
             };
         } catch {
             partyOutstanding = null;
         }
     }
+
 
     function selectParty(p: Party) {
         selectedId = p.id;
@@ -257,23 +269,40 @@
         </div>
         <div class="bal-summary">
             <div class="bal-row">
-                <span>Balance:&nbsp;</span>
+                <span>Balance</span>
                 <strong class={balanceClass(Number(selected.balance))}>
                     {Math.abs(Number(selected.balance)).toFixed(2)}
                     <span class="bal-tag">{balanceLabel(Number(selected.balance))}</span>
                 </strong>
             </div>
-            {#if partyOutstanding && partyOutstanding.on_account > 0.001}
-                <div class="bal-row bal-detail">
-                    <span class="muted">Outstanding:&nbsp;</span>
-                    <span>{Math.abs(partyOutstanding.outstanding).toFixed(2)}</span>
-                </div>
-                <div class="bal-row bal-detail on-acc">
-                    <span>On account:&nbsp;</span>
-                    <span>{partyOutstanding.on_account.toFixed(2)}</span>
-                </div>
+            {#if partyOutstanding}
+                {#if partyOutstanding.receivable_outstanding > 0.001}
+                    <div class="bal-row bal-detail">
+                        <span class="muted">Unpaid sales</span>
+                        <span>{partyOutstanding.receivable_outstanding.toFixed(2)}</span>
+                    </div>
+                {/if}
+                {#if partyOutstanding.payable_outstanding > 0.001}
+                    <div class="bal-row bal-detail">
+                        <span class="muted">Unpaid purchases</span>
+                        <span>{partyOutstanding.payable_outstanding.toFixed(2)}</span>
+                    </div>
+                {/if}
+                {#if partyOutstanding.receivable_on_account > 0.001}
+                    <div class="bal-row bal-detail on-acc">
+                        <span>Excess receipts (advance)</span>
+                        <span>{partyOutstanding.receivable_on_account.toFixed(2)}</span>
+                    </div>
+                {/if}
+                {#if partyOutstanding.payable_on_account > 0.001}
+                    <div class="bal-row bal-detail on-acc">
+                        <span>Excess payments (advance)</span>
+                        <span>{partyOutstanding.payable_on_account.toFixed(2)}</span>
+                    </div>
+                {/if}
             {/if}
         </div>
+
 
         <div class="lfilter">
             <button class:active={ledgerFilter === "ALL"} onclick={() => (ledgerFilter = "ALL")}>All</button>

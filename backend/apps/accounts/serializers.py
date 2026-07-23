@@ -30,7 +30,8 @@ class SettlementModeSerializer(serializers.ModelSerializer):
     class Meta:
         model = SettlementMode
         fields = [
-            'id', 'name', 'is_system', 'is_active',
+            'id', 'name', 'category', 'bank_type',
+            'is_system', 'is_active',
             'sort_order', 'needs_reference',
         ]
         read_only_fields = ['is_system', 'needs_reference']

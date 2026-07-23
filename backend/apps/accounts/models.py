@@ -119,6 +119,7 @@ class SettlementMode(AuditModel):
             )
         ]
 
+    @property
     def needs_reference(self):
         return self.category == 'BANK'
 
