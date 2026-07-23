@@ -15,6 +15,11 @@ class Received(VoucherBase):
         null=True, blank=True,
         related_name="receipts",
     )
+    transaction_ref = models.CharField(
+        max_length=100,
+        blank=True, null=True,
+        help_text='UPI ref, UTR, cheque number, etc.'
+    )
 
     class Meta(VoucherBase.Meta):
         constraints = [
@@ -35,6 +40,11 @@ class Payment(VoucherBase):
         on_delete=models.PROTECT,
         null=True, blank=True,
         related_name="payments",
+    )
+    transaction_ref = models.CharField(
+        max_length=100,
+        blank=True, null=True,
+        help_text='UPI ref, UTR, cheque number, etc.'
     )
 
     class Meta(VoucherBase.Meta):

@@ -1,5 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser
+from django.views.decorators.http import condition
+
 from apps.common.models import AuditModel
 
 
@@ -71,10 +73,21 @@ class UserCompanySetting(models.Model):
 
 class SettlementMode(AuditModel):
     """
-        User scoped payment/received method catalogue (Cash, UPI, etc...)
-        Seeded with system defaults at registration time; user may add more from settings
-        System rows can't be deleted (guarded in the service/view)
+        User-scoped payment/received method catalogue.
+        Users create descriptive names like "PhonePe - SBI", "Paytm", "HDFC Cheque".
+        category + bank_type provide structural metadata for UI grouping and validation.
+        System rows can't be deleted (guarded in the service/view).
     """
+    CATEGORY_CHOICES = (
+        ('CASH', 'Cash'),
+        ('BANK', 'Bank'),
+    )
+    BANK_TYPE_CHOICES = (
+        ('UPI', 'UPI'),
+        ('TRANSFER', 'Transfer'),
+        ('CHEQUE', 'Cheque'),
+        ('OTHER', 'Other'),
+    )
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
@@ -82,6 +95,17 @@ class SettlementMode(AuditModel):
     )
 
     name = models.CharField(max_length=60)
+    category = models.CharField(
+        max_length=10,
+        choices=CATEGORY_CHOICES,
+        default='CASH',
+    )
+    bank_type = models.CharField(
+        max_length=10,
+        choices=BANK_TYPE_CHOICES,
+        blank=True, null=True,
+        help_text='Only relevant when category is bank.'
+    )
     is_system = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     sort_order =models.PositiveSmallIntegerField(default=0)
@@ -95,7 +119,41 @@ class SettlementMode(AuditModel):
             )
         ]
 
+    def needs_reference(self):
+        return self.category == 'BANK'
+
     def __str__(self):
         return self.name
 
+
+class CompanyBankDetail(AuditModel):
+    """
+        Default bank details for a company. Printed on sale invoices.
+        One company can have multiple bank accounts; one is marked is_default.
+    """
+    company = models.ForeignKey(
+        Company,
+        on_delete=models.CASCADE,
+        related_name="bank_details",
+    )
+    bank_name = models.CharField(max_length=120)
+    account_number = models.CharField(max_length=40)
+    ifsc_code = models.CharField(max_length=20, blank=True, default="")
+    branch = models.CharField(max_length=120, blank=True, default="")
+    account_holder = models.CharField(max_length=200, blank=True, default="")
+    upi_id = models.CharField(max_length=100, blank=True, default="")
+    is_default = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['-is_default', 'bank_name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['company'],
+                condition=models.Q(is_default=True),
+                name='unique_default_bank_per_company'
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.bank_name} - ({self.account_number})"
 

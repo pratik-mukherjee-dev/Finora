@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Company, UserCompanySetting, License, SettlementMode
+from .models import Company, UserCompanySetting, License, SettlementMode, CompanyBankDetail
 
 
 class CompanySerializer(serializers.ModelSerializer):
@@ -25,8 +25,22 @@ class LicenseSerializer(serializers.ModelSerializer):
 
 
 class SettlementModeSerializer(serializers.ModelSerializer):
+    needs_reference = serializers.BooleanField(read_only=True)
+
     class Meta:
         model = SettlementMode
-        fields = ['id', 'name', 'is_system', 'is_active', 'sort_order']
-        read_only_fields = ['is_system']
+        fields = [
+            'id', 'name', 'is_system', 'is_active',
+            'sort_order', 'needs_reference',
+        ]
+        read_only_fields = ['is_system', 'needs_reference']
 
+
+class CompanyBankDetailSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CompanyBankDetail
+        fields = [
+            "id", "company", "bank_name", "account_number", "ifsc_code",
+            "branch", "account_holder", "upi_id", "is_default",
+        ]
+        read_only_fields = ["id"]

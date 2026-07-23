@@ -12,14 +12,17 @@ from .reconciliation import (
 
 
 @transaction.atomic
-def create_received(user, company, fy, party, date, amount, number=None, mode=None, target_bill_id=None):
+def create_received(
+        user, company, fy, party, date, amount,
+        number=None, mode=None, target_bill_id=None, transaction_ref=None):
     if not fy.is_writable:
         raise DomainError("Financial year is not writable.")
     amount = Decimal(str(amount))
     num = next_number(company, fy, "RECEIVED", manual=number)
     r = Received.objects.create(
         company=company, financial_year=fy, party=party, date=date,
-        number=num, amount=amount, total_amount=amount, mode=mode, created_by=user,
+        number=num, amount=amount, total_amount=amount, mode=mode,
+        transaction_ref=transaction_ref or None, created_by=user,
     )
     post_entry(party, date, fy, "RECEIVED", r.id, credit=amount)
     if target_bill_id is not None:
@@ -30,14 +33,17 @@ def create_received(user, company, fy, party, date, amount, number=None, mode=No
 
 
 @transaction.atomic
-def create_payment(user, company, fy, party, date, amount, number=None, mode=None, target_bill_id=None):
+def create_payment(
+        user, company, fy, party, date, amount,
+        number=None, mode=None, target_bill_id=None, transaction_ref=None):
     if not fy.is_writable:
         raise DomainError("Financial year is not writable.")
     amount = Decimal(str(amount))
     num = next_number(company, fy, "PAYMENT", manual=number)
     p = Payment.objects.create(
         company=company, financial_year=fy, party=party, date=date,
-        number=num, amount=amount, total_amount=amount, mode=mode, created_by=user,
+        number=num, amount=amount, total_amount=amount, mode=mode,
+        transaction_ref=transaction_ref or None, created_by=user,
     )
     post_entry(party, date, fy, "PAYMENT", p.id, debit=amount)
     if target_bill_id is not None:

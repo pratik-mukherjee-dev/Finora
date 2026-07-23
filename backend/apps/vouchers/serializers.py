@@ -104,12 +104,16 @@ class PurchaseSerializer(serializers.ModelSerializer):
 class ReceivedSerializer(serializers.ModelSerializer):
     party_name = serializers.CharField(source="party.name", read_only=True)
     mode_name = serializers.CharField(source="mode.name", read_only=True, default=None)
+    mode_category = serializers.CharField(source="mode.category", read_only=True, default=None)
+    mode_bank_type = serializers.CharField(source="mode.bank_type", read_only=True, default=None)
 
     class Meta:
         model = Received
         fields = [
             "id", "company", "party", "party_name", "number",
-            "date", "amount", "mode", "mode_name", "is_cancelled"
+            "date", "amount", "mode", "mode_name",
+            "mode_category", "mode_bank_type", "transaction_ref",
+            "is_cancelled"
         ]
         read_only_fields = ["number", "is_cancelled"]
 
@@ -117,12 +121,16 @@ class ReceivedSerializer(serializers.ModelSerializer):
 class PaymentSerializer(serializers.ModelSerializer):
     party_name = serializers.CharField(source="party.name", read_only=True)
     mode_name = serializers.CharField(source="mode.name", read_only=True, default=None)
+    mode_category = serializers.CharField(source="mode.category", read_only=True, default=None)
+    mode_bank_type = serializers.CharField(source="mode.bank_type", read_only=True, default=None)
 
     class Meta:
         model = Payment
         fields = [
             "id", "company", "party", "party_name", "number",
-            "date", "amount", "mode", "mode_name", "is_cancelled"
+            "date", "amount", "mode", "mode_name",
+            "mode_category", "mode_bank_type", "transaction_ref",
+            "is_cancelled"
         ]
         read_only_fields = ["number", "is_cancelled"]
 

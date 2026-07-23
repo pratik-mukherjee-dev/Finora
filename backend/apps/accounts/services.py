@@ -90,10 +90,11 @@ def set_segregation(user, enabled):
     return setting
 
 
+# (name, is_system, category, bank_type)
 DEFAULT_SETTLEMENT_MODES = (
-    ("Cash", True),
-    ("UPI", False),
-    ("Bank Transfer", False),
+    ("Cash", True, "CASH", None),
+    ("UPI", False, "BANK", "UPI"),
+    ("Bank Transfer", False, "BANK", "TRANSFER"),
 )
 
 @transaction.atomic
@@ -104,12 +105,14 @@ def seed_default_settlement_modes(user):
     :return: list of created settlement modes
     """
     created = []
-    for i, (name, is_system) in enumerate(DEFAULT_SETTLEMENT_MODES):
+    for i, (name, is_system, category, bank_type) in enumerate(DEFAULT_SETTLEMENT_MODES):
         obj, was_created = SettlementMode.objects.get_or_create(
             user=user,
             name=name,
             defaults={
                 "is_system": is_system,
+                "category": category,
+                "bank_type": bank_type,
                 "sort_order": i,
                 "created_by": user
             }
@@ -120,16 +123,22 @@ def seed_default_settlement_modes(user):
 
 
 @transaction.atomic
-def create_settlement_mode(user, name, sort_order=0):
+def create_settlement_mode(user, name, sort_order=0, category="CASH", bank_type=None):
     name = name.strip()
     if not name:
         raise DomainError("Settlement mode name is required.")
+    if category == 'CASH':
+        bank_type = None
     return SettlementMode.objects.get_or_create(
         user=user,
         name=name,
-        is_systen=False,
-        sort_order=sort_order,
-        created_by=user,
+        defaults={
+            'is_system': False,
+            'category': category,
+            'bank_type': bank_type,
+            'sort_order': sort_order,
+            'created_by': user
+        }
     )
 
 

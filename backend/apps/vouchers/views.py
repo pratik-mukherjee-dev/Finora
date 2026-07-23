@@ -34,6 +34,12 @@ def _resolve_mode(request):
     return SettlementMode.objects.filter(user=request.user, pk=mode_id).first()
 
 
+def _resolve_settle_extras(request):
+    return {
+        'transaction_ref': request.data.get('transaction_ref'),
+    }
+
+
 def _resolve_target_bill(request):
     """Optional: settle only this specific bill (inline sale/purchase
     settlement). None -> auto-allocate oldest->latest (Settle page)."""
@@ -153,11 +159,13 @@ class ReceivedViewSet(
 
     def create(self, request):
         fy, company, party = _context(request)
+        extras = _resolve_settle_extras(request)
         r = services.create_received(
             request.user, company, fy, party, request.data["date"],
             request.data["amount"], number=request.data.get("number"),
             mode=_resolve_mode(request),
             target_bill_id=_resolve_target_bill(request),
+            **extras,
         )
         data = self.get_serializer(r).data
         data["allocations"] = _allocation_rows("RECEIVED", r.id)
@@ -194,11 +202,13 @@ class PaymentViewSet(
 
     def create(self, request):
         fy, company, party = _context(request)
+        extras = _resolve_settle_extras(request)
         p = services.create_payment(
             request.user, company, fy, party, request.data["date"],
             request.data["amount"], number=request.data.get("number"),
             mode=_resolve_mode(request),
             target_bill_id=_resolve_target_bill(request),
+            **extras,
         )
         data = self.get_serializer(p).data
         data["allocations"] = _allocation_rows("PAYMENT", p.id)

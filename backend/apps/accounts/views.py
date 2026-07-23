@@ -1,9 +1,19 @@
-from rest_framework import viewsets, mixins
+from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from .models import Company, SettlementMode
-from .serializers import CompanySerializer, UserCompanySettingSerializer, SettlementModeSerializer, LicenseSerializer
+from .models import (
+    Company,
+    SettlementMode,
+    CompanyBankDetail,
+)
+from .serializers import (
+    CompanySerializer,
+    UserCompanySettingSerializer,
+    SettlementModeSerializer,
+    LicenseSerializer,
+    CompanyBankDetailSerializer,
+)
 from . import services, selectors
 
 
@@ -61,3 +71,35 @@ class SettlementModeViewSet(viewsets.ModelViewSet):
         services.delete_settlement_mode(request.user, kwargs["pk"])
         from rest_framework.response import Response
         return Response(status=204)
+
+
+class CompanyBankDetailViewSet(viewsets.ModelViewSet):
+    serializer_class = CompanyBankDetailSerializer
+    http_method_names = ["get", "post", "patch", "delete"]
+
+    def get_queryset(self):
+        qs = CompanyBankDetail.objects.filter(company__user=self.request.user)
+        company_id = self.request.query_params.get("company")
+        if company_id:
+            qs = qs.filter(company_id=company_id)
+        return qs
+
+    def perform_create(self, serializer):
+        company = Company.objects.get(
+            user=self.request.user, pk=serializer.validated_data["company"].id
+        )
+        # If marking as default, unset any existing default
+        if serializer.validated_data.get("is_default"):
+            CompanyBankDetail.objects.filter(
+                company=company, is_default=True
+            ).update(is_default=False)
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        if serializer.validated_data.get("is_default"):
+            CompanyBankDetail.objects.filter(
+                company=serializer.instance.company, is_default=True
+            ).exclude(pk=serializer.instance.pk).update(is_default=False)
+        serializer.save()
+
+
