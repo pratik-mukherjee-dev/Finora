@@ -20,7 +20,13 @@ type Setting = {
     segregation_enabled: boolean;
     is_mode_locked: boolean;
 };
-type Company = { id: number; name: string; is_default: boolean; created_at: string };
+type Company = {
+    id: number;
+    name: string;
+    is_default: boolean;
+    is_active: boolean;
+    created_at: string
+};
 type License = {
     plan: string;
     mode: Mode;
@@ -220,6 +226,36 @@ export const auth = {
         });
         companies = await request<Company[]>("/api/accounts/companies/");
         await resolveCurrentCompany();
+    },
+
+    async upgradeLicense(maxCompanies: number = 5) {
+        license = await request<License>("/api/accounts/settings/upgrade_multi/", {
+            method: "POST",
+            body: JSON.stringify({ max_companies: maxCompanies }),
+        });
+        await loadContext();
+    },
+
+    async downgradeLicense() {
+        license = await request<License>("/api/accounts/settings/downgrade_single/", {
+            method: "POST",
+        });
+        await loadContext();
+    },
+
+    async toggleCompanyActive(companyId: number, isActive: boolean) {
+        await request<Company>(`/api/accounts/companies/${companyId}/toggle_active/`, {
+            method: "POST",
+            body: JSON.stringify({ is_active: isActive }),
+        });
+        await loadContext();
+    },
+
+    async makeDefaultCompany(companyId: number) {
+        await request<Company>(`/api/accounts/companies/${companyId}/make_default/`, {
+            method: "POST",
+        });
+        await loadContext();
     },
 
     async ensureFy(startDate: string, endDate: string) {

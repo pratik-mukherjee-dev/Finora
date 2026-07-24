@@ -14,6 +14,8 @@ REST_FRAMEWORK = {
     ],
 }
 
+FINORA_DEV_MODE = os.environ.get("FINORA_DEV_MODE", "0") == "1"
+
 # Runtime config written by the Tauri bootstrap (embedded Postgres port, data dir).
 # In the packaged app this is the ONLY source of truth for the DB connection.
 # We deliberately do not fall back to base.py's DB_* / 5432 defaults here: doing

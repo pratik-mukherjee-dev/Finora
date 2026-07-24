@@ -57,6 +57,46 @@ def create_company(user, name, make_default=False):
 
 
 @transaction.atomic
+def upgrade_to_multi_license(user, max_companies=5):
+    """Upgrade the user's license to multi-company mode.
+
+    Until a real license/payment system is implemented, this allows
+    switching from single to multi via the Settings UI.
+    The max_companies cap prevents unbounded growth.
+    """
+    lic = License.objects.select_for_update().get(user=user)
+    lic.mode = License.MULTI
+    lic.max_companies = max(lic.max_companies, max_companies)
+    lic.save(update_fields=["mode", "max_companies"])
+    return lic
+
+
+@transaction.atomic
+def downgrade_to_single_license(user):
+    """Downgrade the user's license back to single-company mode.
+
+    Only allowed when the user has 1 or fewer companies.
+    """
+    company_count = user.companies.count()
+    if company_count > 1:
+        raise DomainError(
+            f"Cannot downgrade: you have {company_count} companies. "
+            "Delete extra companies first."
+        )
+    lic = License.objects.select_for_update().get(user=user)
+    lic.mode = License.SINGLE
+    lic.max_companies = 1
+    lic.save(update_fields=["mode", "max_companies"])
+
+    # Also force the setting back to single
+    setting = UserCompanySetting.objects.select_for_update().get(user=user)
+    setting.active_mode = UserCompanySetting.SINGLE
+    setting.segregation_enabled = False
+    setting.save(update_fields=["active_mode", "segregation_enabled"])
+    return lic
+
+
+@transaction.atomic
 def switch_to_multi(user, segregation_enabled=False):
     lic = License.objects.select_for_update().filter(user=user).first()
     if not lic or not lic.allows_multi:
@@ -88,6 +128,36 @@ def set_segregation(user, enabled):
     setting.segregation_enabled = enabled
     setting.save(update_fields=["segregation_enabled"])
     return setting
+
+
+@transaction.atomic
+def set_company_active(user, company_id, is_active):
+    """Activate or deactivate a company. The default company cannot be deactivated."""
+    company = Company.objects.filter(user=user, pk=company_id).first()
+    if not company:
+        raise DomainError("Company not found.")
+    if not is_active and company.is_default:
+        raise DomainError("Cannot deactivate the default company.")
+    company.is_active = is_active
+    company.save(update_fields=["is_active"])
+    return company
+
+
+@transaction.atomic
+def set_default_company(user, company_id):
+    """Set a company as the default. Unsets any previous default."""
+    company = Company.objects.filter(user=user, pk=company_id).first()
+    if not company:
+        raise DomainError("Company not found.")
+    Company.objects.filter(user=user, is_default=True).update(is_default=False)
+    company.is_default = True
+    company.save(update_fields=["is_default"])
+
+    setting = UserCompanySetting.objects.filter(user=user).first()
+    if setting:
+        setting.default_company = company
+        setting.save(update_fields=["default_company"])
+    return company
 
 
 # (name, is_system, category, bank_type)

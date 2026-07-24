@@ -97,11 +97,16 @@ pub fn start(app: &AppHandle) -> Result<(Sidecars, u16), String> {
     fs::write(&runtime_json, cfg.to_string()).map_err(|e| e.to_string())?;
 
     // 5. spawn Django (add pg_bin to PATH so libpq DLLs resolve)
+    //    FINORA_DEV_MODE is derived from the Rust compile-time debug flag:
+    //    - `cargo tauri dev`   (debug)   → "1" → license self-service enabled
+    //    - `cargo tauri build` (release) → "0" → license endpoints locked
+    let dev_mode = if cfg!(debug_assertions) { "1" } else { "0" };
     let path_var = std::env::var("PATH").unwrap_or_default();
     let new_path = format!("{};{}", pg_bin.to_str().unwrap(), path_var);
     let dj = Command::new(&backend_exe)
         .env("FINORA_RUNTIME_CONFIG", runtime_json.to_str().unwrap())
         .env("DJANGO_PORT", dj_port.to_string())
+        .env("FINORA_DEV_MODE", dev_mode)
         .env("PATH", new_path)
         .spawn().map_err(|e| e.to_string())?;
 

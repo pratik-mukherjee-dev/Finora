@@ -10,6 +10,7 @@ load_dotenv(BASE_DIR / ".env", override=False)
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-insecure-change-me")
 DEBUG = os.getenv("DEBUG", "0") == "1"
 ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
+FINORA_DEV_MODE = os.getenv("FINORA_DEV_MODE", "0") == "1"
 
 INSTALLED_APPS = [
     "django.contrib.admin",

@@ -30,6 +30,17 @@ class CompanyViewSet(viewsets.ModelViewSet):
             serializer.validated_data.get("is_default", False),
         )
 
+    @action(detail=True, methods=["post"])
+    def toggle_active(self, request, pk=None):
+        is_active = request.data.get("is_active", True)
+        company = services.set_company_active(request.user, pk, bool(is_active))
+        return Response(CompanySerializer(company).data)
+
+    @action(detail=True, methods=["post"])
+    def make_default(self, request, pk=None):
+        company = services.set_default_company(request.user, pk)
+        return Response(CompanySerializer(company).data)
+
 
 class SettingViewSet(viewsets.ViewSet):
     def list(self, request):
@@ -55,6 +66,17 @@ class SettingViewSet(viewsets.ViewSet):
     def segregation(self, request):
         s = services.set_segregation(request.user, bool(request.data.get("enabled")))
         return Response(UserCompanySettingSerializer(s).data)
+
+    @action(detail=False, methods=["post"])
+    def upgrade_multi(self, request):
+        max_companies = int(request.data.get("max_companies", 5))
+        lic = services.upgrade_to_multi_license(request.user, max_companies)
+        return Response(LicenseSerializer(lic).data)
+
+    @action(detail=False, methods=["post"])
+    def downgrade_single(self, request):
+        lic = services.downgrade_to_single_license(request.user)
+        return Response(LicenseSerializer(lic).data)
 
 
 class SettlementModeViewSet(viewsets.ModelViewSet):
@@ -101,5 +123,3 @@ class CompanyBankDetailViewSet(viewsets.ModelViewSet):
                 company=serializer.instance.company, is_default=True
             ).exclude(pk=serializer.instance.pk).update(is_default=False)
         serializer.save()
-
-

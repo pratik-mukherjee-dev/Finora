@@ -13,6 +13,7 @@ class Company(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="companies")
     name = models.CharField(max_length=200)
     is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -157,4 +158,3 @@ class CompanyBankDetail(AuditModel):
 
     def __str__(self):
         return f"{self.bank_name} - ({self.account_number})"
-

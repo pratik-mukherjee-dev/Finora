@@ -216,6 +216,54 @@
         }
     }
 
+    async function upgradeLicense() {
+        busy = true;
+        modeError = null;
+        try {
+            await auth.upgradeLicense(5);
+        } catch (e) {
+            modeError = e instanceof ApiError ? e.message : "Could not upgrade license.";
+        } finally {
+            busy = false;
+        }
+    }
+
+    async function downgradeLicense() {
+        busy = true;
+        modeError = null;
+        try {
+            await auth.downgradeLicense();
+        } catch (e) {
+            modeError = e instanceof ApiError ? e.message : "Could not downgrade license.";
+        } finally {
+            busy = false;
+        }
+    }
+
+    async function toggleCompanyActive(c: { id: number; is_active: boolean }) {
+        companyBusy = true;
+        companyError = null;
+        try {
+            await auth.toggleCompanyActive(c.id, !c.is_active);
+        } catch (e) {
+            companyError = e instanceof ApiError ? e.message : "Could not update company.";
+        } finally {
+            companyBusy = false;
+        }
+    }
+
+    async function makeDefault(c: { id: number }) {
+        companyBusy = true;
+        companyError = null;
+        try {
+            await auth.makeDefaultCompany(c.id);
+        } catch (e) {
+            companyError = e instanceof ApiError ? e.message : "Could not set default.";
+        } finally {
+            companyBusy = false;
+        }
+    }
+
     // ── settlement modes ───────────────────────────────────────────────────────
     async function loadModes() {
         try {
@@ -427,29 +475,48 @@
                     <h3>License & Mode</h3>
                     <span class="license-badge">
                         {auth.license?.plan ?? "base"}
-                        {#if allowsMulti}<span class="tag ok">multi unlocked</span>{/if}
+                        {#if allowsMulti}<span class="tag ok">multi unlocked</span>{:else}<span
+                                class="tag">single only</span>{/if}
                     </span>
                 </div>
                 <p class="hint">Max {maxCompanies} {maxCompanies === 1 ? "company" : "companies"} on your current
                     plan.</p>
 
-                <div class="mode-toggle">
-                    <button class:active={companyMode === "single"} disabled={busy || companyMode === "single"}
-                            onclick={switchToSingle}>
-                        Single
-                    </button>
-                    <button class:active={companyMode === "multi"}
-                            disabled={busy || companyMode === "multi" || !allowsMulti}
-                            onclick={switchToMulti}>
-                        Multi
-                    </button>
-                </div>
+                {#if !allowsMulti}
+                    <div class="upgrade-box">
+                        <p class="hint">Multi-company mode is locked. Upgrade your license to unlock it.</p>
+                        <button class="btn-primary" disabled={busy} onclick={upgradeLicense}>
+                            {busy ? "Upgrading…" : "Unlock Multi-Company"}
+                        </button>
+                    </div>
+                {:else}
+                    <div class="mode-toggle">
+                        <button class:active={companyMode === "single"} disabled={busy || companyMode === "single"}
+                                onclick={switchToSingle}>
+                            Single
+                        </button>
+                        <button class:active={companyMode === "multi"}
+                                disabled={busy || companyMode === "multi"}
+                                onclick={switchToMulti}>
+                            Multi
+                        </button>
+                    </div>
 
-                {#if companyMode === "multi"}
-                    <label class="check">
-                        <input type="checkbox" checked={segregation} onchange={toggleSegregation} disabled={busy}/>
-                        Enable segregation (split sales across companies)
-                    </label>
+                    {#if companyMode === "multi"}
+                        <label class="check">
+                            <input type="checkbox" checked={segregation} onchange={toggleSegregation} disabled={busy}/>
+                            Enable segregation (split data across companies)
+                        </label>
+                    {/if}
+
+                    <div class="downgrade-box">
+                        <button class="btn-sm danger" disabled={busy || companyCount > 1} onclick={downgradeLicense}>
+                            Downgrade to Single
+                        </button>
+                        {#if companyCount > 1}
+                            <span class="hint">Delete extra companies before downgrading.</span>
+                        {/if}
+                    </div>
                 {/if}
 
                 {#if modeError}<p class="err">{modeError}</p>{/if}
@@ -462,16 +529,29 @@
                 </div>
                 <ul class="item-list">
                     {#each auth.companies as c (c.id)}
-                        <li class:active={c.id === auth.currentCompany?.id}>
+                        <li class:active={c.id === auth.currentCompany?.id} class:dimmed={!c.is_active}>
                             <span class="item-name">{c.name}</span>
                             <span class="item-actions">
                                 {#if c.is_default}<span class="tag">default</span>{/if}
                                 {#if c.id === auth.currentCompany?.id}<span class="tag ok">current</span>{/if}
+                                {#if !c.is_active}<span class="tag danger-tag">inactive</span>{/if}
+                                {#if companyMode === "multi"}
+                                    {#if !c.is_default}
+                                        <button class="btn-sm" onclick={() => makeDefault(c)} disabled={companyBusy}>
+                                            Set default
+                                        </button>
+                                    {/if}
+                                    <button class="btn-sm" class:active={c.is_active}
+                                            onclick={() => toggleCompanyActive(c)}
+                                            disabled={companyBusy || c.is_default}>
+                                        {c.is_active ? "Deactivate" : "Activate"}
+                                    </button>
+                                {/if}
                             </span>
                         </li>
                     {/each}
                 </ul>
-                {#if canAddCompany}
+                {#if canAddCompany && (companyMode === "multi" || companyCount === 0)}
                     <div class="add-row">
                         <input bind:value={newCompanyName} placeholder="New company name…"
                                onkeydown={(e) => { if (e.key === "Enter") addCompany(); }}/>
@@ -480,7 +560,7 @@
                             {companyBusy ? "…" : "Add"}
                         </button>
                     </div>
-                {:else}
+                {:else if !canAddCompany}
                     <p class="hint">Company limit reached for your license.</p>
                 {/if}
                 {#if companyError}<p class="err">{companyError}</p>{/if}
@@ -1161,4 +1241,27 @@
         color: var(--text-muted);
         white-space: nowrap;
     }
+
+    .upgrade-box {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 14px 16px;
+        border: 1px dashed var(--border-hi);
+        border-radius: var(--radius);
+        background: rgba(47, 111, 235, .04);
+    }
+
+    .downgrade-box {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding-top: 4px;
+    }
+
+    .tag.danger-tag {
+        background: rgba(255, 155, 155, .12);
+        color: #ff9b9b;
+    }
+
 </style>

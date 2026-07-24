@@ -5,7 +5,7 @@ from .models import Company, UserCompanySetting, License, SettlementMode, Compan
 class CompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
-        fields = ["id", "name", "is_default", "created_at"]
+        fields = ["id", "name", "is_default", "is_active", "created_at"]
         read_only_fields = ["created_at"]
 
 
